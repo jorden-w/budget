@@ -17,9 +17,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
 <style>
   :root { color-scheme: dark; }
   * { -webkit-tap-highlight-color: transparent; }
@@ -71,7 +71,21 @@
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <div id="boot-fallback" style="padding:24px;font-family:system-ui,sans-serif;color:#a8a29e;font-size:13px;line-height:1.6;">
+    Loading… if this message doesn't go away in a few seconds, something failed to load (check your connection) — tap and hold to reload, or view the error below.
+  </div>
+</div>
+<script>
+  window.addEventListener('error', function (e) {
+    var root = document.getElementById('root');
+    if (root) {
+      root.innerHTML = '<div style="padding:24px;font-family:ui-monospace,monospace;color:#fb7185;font-size:12px;white-space:pre-wrap;">App failed to load:\n\n' +
+        (e.message || 'Unknown error') + (e.filename ? ('\n\nFile: ' + e.filename + (e.lineno ? (':' + e.lineno) : '')) : '') +
+        '\n\nThis usually means a CDN script (React/Babel/Tailwind) failed to load or changed. Try reloading, or check your connection.</div>';
+    }
+  });
+</script>
 <script type="text/babel" data-presets="react">
 
 const { useState, useEffect, useMemo, useRef } = React;
@@ -157,7 +171,6 @@ function NumInput({ value, onChange, className, style, placeholder, autoFocus, o
   const [text, setText] = useState(String(value ?? ""));
   const [focused, setFocused] = useState(false);
 
-  // Sync external changes when not focused
   useEffect(() => {
     if (!focused) setText(String(value ?? ""));
   }, [value, focused]);
@@ -181,7 +194,6 @@ function NumInput({ value, onChange, className, style, placeholder, autoFocus, o
       onFocus={(e) => { setFocused(true); setText(String(value ?? "")); e.target.select?.(); }}
       onChange={(e) => {
         const raw = e.target.value;
-        // Allow only digits, one dot, optional leading minus
         if (/^-?\d*\.?\d*$/.test(raw)) {
           setText(raw);
           commit(raw);
@@ -209,16 +221,13 @@ function App() {
   const [showAddInvestment, setShowAddInvestment] = useState(false);
   const [editing, setEditing] = useState({ type: null, key: null, value: "" });
 
-  // Persist on every change
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
   }, [state]);
 
-  // Track unexported changes — only counted at meaningful events (paycheck, bonus, undo, add/delete account/debt/investment)
   const bumpChanges = (n = 1) =>
     setState((s) => ({ ...s, unexportedChanges: (s.unexportedChanges || 0) + n }));
 
-  // New year detection
   useEffect(() => {
     const currentYear = new Date().getFullYear();
     if (state.ytdYear !== currentYear && state.newYearPrompted !== currentYear) {
@@ -424,7 +433,6 @@ function App() {
   };
 
   // ============ BACKUP REMINDER LOGIC ============
-  // Show banner if 7+ days since last export OR 10+ unexported changes
   const shouldShowBackupBanner = (() => {
     const days = state.lastExportAt
       ? (Date.now() - state.lastExportAt) / (1000 * 60 * 60 * 24)
@@ -441,7 +449,6 @@ function App() {
         background: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(212,165,116,0.12), transparent)",
       }} />
 
-      {/* BACKUP BANNER */}
       {shouldShowBackupBanner && (
         <div className="sticky top-0 z-40 px-4 py-2.5 flex items-center gap-2 text-xs animate-fade-in"
           style={{ background: "rgba(212,165,116,0.15)", borderBottom: "1px solid rgba(212,165,116,0.3)", backdropFilter: "blur(8px)" }}>
@@ -483,7 +490,6 @@ function App() {
           </div>
         </div>
 
-        {/* TABS */}
         <div className="flex gap-1 mb-5 p-1 rounded-2xl overflow-x-auto" style={{ background: "#161616" }}>
           {[
             { id: "paycheck", label: "Paycheck", icon: IconWallet },
@@ -791,7 +797,7 @@ function DualSlider({ label, sublabel, percent, dollar, onPercentChange, onLabel
     const v = parseFloat(tempDollar);
     if (!isNaN(v) && base > 0) {
       const newPct = Math.min(max, Math.max(0, (v / base) * 100));
-      onPercentChange(newPct); // exact precision when typing $
+      onPercentChange(newPct);
     }
     setEditingDollar(false);
   };
@@ -1515,8 +1521,7 @@ function DebtCard({ debt, state, update, bumpChanges }) {
 
 // ============ GUIDE TAB (recommendations) ============
 function GuideTab({ state, update, netWorth, calc }) {
-  // Compute current state for recommendations
-  const monthlyExpenses = calc.totalExpenses * 2; // biweekly → monthly approx
+  const monthlyExpenses = calc.totalExpenses * 2;
   const targetEmergency = monthlyExpenses * 3;
   const emergencyProgress = state.accounts.savings;
   const has401kContribution = state.contributions.contrib401k > 0;
@@ -1612,7 +1617,7 @@ function GuideTab({ state, update, netWorth, calc }) {
       id: "taxable_brokerage",
       title: "Invest in a taxable brokerage",
       why: "After all tax-advantaged accounts are maxed, a brokerage account gives flexibility — no withdrawal age, no contribution limits. Index funds work well here. Consider tax-loss harvesting.",
-      done: false, // user-judged
+      done: false,
       action: state.customAllocations.some(c => c.name.toLowerCase().includes("brokerage") || c.name.toLowerCase().includes("taxable"))
         ? "You've added a brokerage account. Keep contributing."
         : "Add a brokerage account from the Paycheck tab when you're ready.",
@@ -1842,7 +1847,13 @@ function BonusStat({ label, value, note }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+} catch (err) {
+  document.getElementById("root").innerHTML =
+    '<div style="padding:24px;font-family:ui-monospace,monospace;color:#fb7185;font-size:12px;white-space:pre-wrap;">App crashed on render:\n\n' +
+    (err && err.message ? err.message : String(err)) + '</div>';
+}
 </script>
 </body>
 </html>
