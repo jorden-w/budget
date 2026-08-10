@@ -1,0 +1,25 @@
+# Real financial documents. jorden-w/budget is public — a committed statement
+# would be permanently in the git history, including after deletion.
+#
+# NOTE the trailing /* rather than a bare `statements/`: excluding the directory
+# itself stops git descending into it, and the negations below would then be
+# unable to re-include anything. Excluding the CONTENTS keeps them working.
+statements/*
+!statements/README.md
+
+# merchant-rules.json stays local too. It's only merchant names, but they're
+# the specific shops, bars and barbers you actually use, and on a public repo
+# under your own name that's a map of where you spend your time. The skill
+# re-learns rules cheaply; git history never forgets.
+
+# Any budget-*.json holds real money data — transactions, card balances, pay,
+# bankroll. Deliberately a wildcard rather than a list of known prefixes:
+# listing them missed budget-setup-*.json and it came within one commit of a
+# public repo. Wrongly ignoring a file is an annoyance; wrongly committing one
+# is permanent. The wildcard is the safe side of that trade.
+budget-*.json
+
+# Local scratch
+*.local.json
+.DS_Store
+Thumbs.db

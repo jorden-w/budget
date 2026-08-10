@@ -1,0 +1,1859 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Budget" />
+<meta name="theme-color" content="#0a0a0a" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
+<link rel="manifest" href="manifest.json" />
+<title>Paycheck Allocator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { -webkit-tap-highlight-color: transparent; }
+  html, body, #root {
+    background: #0a0a0a; color: #f5f5f4;
+    min-height: 100vh; min-height: 100dvh;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    margin: 0;
+  }
+  .font-display { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
+  .font-mono-num { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  .slider {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 8px; border-radius: 9999px;
+    outline: none; cursor: pointer; touch-action: pan-y;
+  }
+  .slider::-webkit-slider-runnable-track { height: 8px; border-radius: 9999px; background: transparent; }
+  .slider::-moz-range-track { height: 8px; border-radius: 9999px; background: transparent; }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #f5f5f4; cursor: grab;
+    border: 4px solid #0a0a0a;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    margin-top: -10px;
+  }
+  .slider::-webkit-slider-thumb:active { cursor: grabbing; transform: scale(1.1); }
+  .slider::-moz-range-thumb {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #f5f5f4; cursor: grab;
+    border: 4px solid #0a0a0a;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .animate-slide-up { animation: slideUp 0.25s ease-out; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 9999px; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="boot-fallback" style="padding:24px;font-family:system-ui,sans-serif;color:#a8a29e;font-size:13px;line-height:1.6;">
+    Loading… if this message doesn't go away in a few seconds, something failed to load (check your connection) — tap and hold to reload, or view the error below.
+  </div>
+</div>
+<script>
+  window.addEventListener('error', function (e) {
+    var root = document.getElementById('root');
+    if (root) {
+      root.innerHTML = '<div style="padding:24px;font-family:ui-monospace,monospace;color:#fb7185;font-size:12px;white-space:pre-wrap;">App failed to load:\n\n' +
+        (e.message || 'Unknown error') + (e.filename ? ('\n\nFile: ' + e.filename + (e.lineno ? (':' + e.lineno) : '')) : '') +
+        '\n\nThis usually means a CDN script (React/Babel/Tailwind) failed to load or changed. Try reloading, or check your connection.</div>';
+    }
+  });
+</script>
+<script type="text/babel" data-presets="react">
+
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ============ ICONS (inline SVG) ============
+const Icon = ({ children, className = "w-4 h-4" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
+);
+const IconPlus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const IconTrending = (p) => <Icon {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></Icon>;
+const IconWallet = (p) => <Icon {...p}><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></Icon>;
+const IconPiggy = (p) => <Icon {...p}><path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2h0V5z"/><path d="M2 9v1c0 1.1.9 2 2 2h1"/><path d="M16 11h0"/></Icon>;
+const IconShield = (p) => <Icon {...p}><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></Icon>;
+const IconEdit = (p) => <Icon {...p}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></Icon>;
+const IconCheck = (p) => <Icon {...p}><polyline points="20 6 9 17 4 12"/></Icon>;
+const IconX = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>;
+const IconRotate = (p) => <Icon {...p}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></Icon>;
+const IconGift = (p) => <Icon {...p}><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></Icon>;
+const IconTrash = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></Icon>;
+const IconTarget = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Icon>;
+const IconWarning = (p) => <Icon {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Icon>;
+const IconChevron = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6"/></Icon>;
+const IconCard = (p) => <Icon {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></Icon>;
+const IconSparkles = (p) => <Icon {...p}><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3z"/></Icon>;
+const IconActivity = (p) => <Icon {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></Icon>;
+const IconSettings = (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>;
+const IconArrowUp = (p) => <Icon {...p}><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></Icon>;
+const IconBank = (p) => <Icon {...p}><line x1="12" y1="2" x2="19" y2="21"/><line x1="19" y1="2" x2="2" y2="21"/></Icon>;
+const IconCompass = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></Icon>;
+const IconDownload = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon>;
+const IconUpload = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>;
+const IconCopy = (p) => <Icon {...p}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></Icon>;
+
+// ============ STORAGE ============
+const STORAGE_KEY = "paycheck_allocator_v2";
+
+const defaultState = {
+  paycheckAmount: 2500,
+  yearlyBonus: 5000,
+  employerMatch: 50,
+  matchCap: 6,
+  taxRate: 22,
+  contributions: { contrib401k: 10, rothIra: 8, emergency: 5 },
+  customAllocations: [],
+  caps: { contrib401k: 23500, rothIra: 7000 },
+  ytd: { contrib401k: 0, rothIra: 0 },
+  ytdYear: new Date().getFullYear(),
+  expenses: [
+    { id: 1, name: "Rent", amount: 950 },
+    { id: 2, name: "Car Insurance", amount: 95 },
+    { id: 3, name: "Gas", amount: 120 },
+    { id: 4, name: "Groceries", amount: 200 },
+  ],
+  debts: [],
+  accounts: { checking: 0, savings: 0, rothIra: 0, contrib401k: 0 },
+  history: [],
+  newYearPrompted: null,
+  completedPhases: [],
+  lastExportAt: null,
+  unexportedChanges: 0,
+};
+
+const loadState = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultState;
+    return { ...defaultState, ...JSON.parse(raw) };
+  } catch { return defaultState; }
+};
+
+// ============ HELPERS ============
+const fmt = (n) => (Number(n) || 0).toLocaleString("en-US", {
+  style: "currency", currency: "USD", maximumFractionDigits: 2,
+});
+const fmtShort = (n) => {
+  const v = Number(n) || 0;
+  if (Math.abs(v) >= 10000) return `$${(v / 1000).toFixed(1)}k`;
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+};
+
+// ============ TEXT NUMBER INPUT (string while editing) ============
+function NumInput({ value, onChange, className, style, placeholder, autoFocus, onBlur, onKeyDown }) {
+  const [text, setText] = useState(String(value ?? ""));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setText(String(value ?? ""));
+  }, [value, focused]);
+
+  const commit = (raw) => {
+    if (raw === "" || raw === "-" || raw === "." || raw === "-.") {
+      onChange(0);
+      return;
+    }
+    const n = parseFloat(raw);
+    onChange(isNaN(n) ? 0 : n);
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={focused ? text : (value === 0 || value === "0" ? "0" : String(value ?? ""))}
+      placeholder={placeholder}
+      autoFocus={autoFocus}
+      onFocus={(e) => { setFocused(true); setText(String(value ?? "")); e.target.select?.(); }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (/^-?\d*\.?\d*$/.test(raw)) {
+          setText(raw);
+          commit(raw);
+        }
+      }}
+      onBlur={(e) => {
+        setFocused(false);
+        commit(text);
+        if (onBlur) onBlur(e);
+      }}
+      onKeyDown={onKeyDown}
+      className={className}
+      style={style}
+    />
+  );
+}
+
+// ============ MAIN APP ============
+function App() {
+  const [state, setState] = useState(loadState);
+  const [activeTab, setActiveTab] = useState("paycheck");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showNewYearPrompt, setShowNewYearPrompt] = useState(false);
+  const [showImportExport, setShowImportExport] = useState(false);
+  const [showAddInvestment, setShowAddInvestment] = useState(false);
+  const [editing, setEditing] = useState({ type: null, key: null, value: "" });
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+  }, [state]);
+
+  const bumpChanges = (n = 1) =>
+    setState((s) => ({ ...s, unexportedChanges: (s.unexportedChanges || 0) + n }));
+
+  useEffect(() => {
+    const currentYear = new Date().getFullYear();
+    if (state.ytdYear !== currentYear && state.newYearPrompted !== currentYear) {
+      setShowNewYearPrompt(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const update = (patch) => setState((s) => ({ ...s, ...patch }));
+  const updateNested = (key, patch) => setState((s) => ({ ...s, [key]: { ...s[key], ...patch } }));
+
+  // ============ CALCULATIONS ============
+  const buildBreakdown = (gross) => {
+    const c401kEmployee = (gross * state.contributions.contrib401k) / 100;
+    const taxable = gross - c401kEmployee;
+    const tax = (taxable * state.taxRate) / 100;
+    const takeHome = taxable - tax;
+    const roth = (gross * state.contributions.rothIra) / 100;
+    const emergency = (gross * state.contributions.emergency) / 100;
+    const matchable = Math.min(c401kEmployee, (gross * state.matchCap) / 100);
+    const match = (matchable * state.employerMatch) / 100;
+    const totalExpenses = state.expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+    const totalDebt = state.debts.reduce(
+      (s, d) => s + Number(d.minPayment || 0) + Number(d.extraPayment || 0), 0
+    );
+    const customTotal = state.customAllocations.reduce(
+      (s, c) => s + (gross * c.percent) / 100, 0
+    );
+    return {
+      gross, c401kEmployee, c401kTotal: c401kEmployee + match, match, tax, takeHome,
+      roth, emergency, totalExpenses, totalDebt, customTotal,
+    };
+  };
+
+  const calc = useMemo(() => {
+    const b = buildBreakdown(state.paycheckAmount);
+    const remaining = b.takeHome - b.roth - b.emergency - b.totalExpenses - b.totalDebt - b.customTotal;
+    return { ...b, remaining };
+  }, [state]);
+
+  const bonusCalc = useMemo(() => {
+    const b = buildBreakdown(state.yearlyBonus);
+    const remaining = b.takeHome - b.roth - b.emergency - b.customTotal;
+    return { ...b, remaining };
+  }, [state.yearlyBonus, state.contributions, state.employerMatch, state.matchCap, state.taxRate, state.customAllocations]);
+
+  // ============ ACTIONS ============
+  const applyEntry = (entry) => {
+    setState((s) => {
+      const customDeltas = entry.effects.custom || {};
+      return {
+        ...s,
+        accounts: {
+          checking: s.accounts.checking + entry.effects.checking,
+          savings: s.accounts.savings + entry.effects.savings,
+          rothIra: s.accounts.rothIra + entry.effects.rothIra,
+          contrib401k: s.accounts.contrib401k + entry.effects.contrib401k,
+        },
+        ytd: {
+          contrib401k: s.ytd.contrib401k + entry.effects.ytd401k,
+          rothIra: s.ytd.rothIra + entry.effects.ytdRoth,
+        },
+        customAllocations: s.customAllocations.map((c) => ({
+          ...c,
+          balance: (c.balance || 0) + (customDeltas[c.id] || 0),
+          ytd: (c.ytd || 0) + (customDeltas[c.id] || 0),
+        })),
+        debts: s.debts.map((d) => {
+          const pay = Number(d.minPayment || 0) + Number(d.extraPayment || 0);
+          return entry.type === "paycheck"
+            ? { ...d, balance: Math.max(0, Number(d.balance || 0) - pay) }
+            : d;
+        }),
+        history: [entry, ...s.history],
+      };
+    });
+  };
+
+  const handleAddPaycheck = () => {
+    if (calc.remaining < 0) return;
+    const customEffects = Object.fromEntries(
+      state.customAllocations.map((c) => [c.id, (state.paycheckAmount * c.percent) / 100])
+    );
+    const debtPayments = state.debts.map((d) => ({
+      id: d.id,
+      amount: Number(d.minPayment || 0) + Number(d.extraPayment || 0),
+    }));
+    applyEntry({
+      id: Date.now(), type: "paycheck", gross: state.paycheckAmount,
+      date: new Date().toISOString(),
+      effects: {
+        checking: calc.remaining, savings: calc.emergency,
+        rothIra: calc.roth, contrib401k: calc.c401kTotal,
+        ytd401k: calc.c401kEmployee, ytdRoth: calc.roth,
+        custom: customEffects, debts: debtPayments,
+      },
+    });
+    bumpChanges();
+  };
+
+  const handleAddBonus = () => {
+    if (bonusCalc.remaining < 0) return;
+    const customEffects = Object.fromEntries(
+      state.customAllocations.map((c) => [c.id, (state.yearlyBonus * c.percent) / 100])
+    );
+    applyEntry({
+      id: Date.now(), type: "bonus", gross: state.yearlyBonus,
+      date: new Date().toISOString(),
+      effects: {
+        checking: bonusCalc.remaining, savings: bonusCalc.emergency,
+        rothIra: bonusCalc.roth, contrib401k: bonusCalc.c401kTotal,
+        ytd401k: bonusCalc.c401kEmployee, ytdRoth: bonusCalc.roth,
+        custom: customEffects, debts: [],
+      },
+    });
+    bumpChanges();
+  };
+
+  const undoEntry = (id) => {
+    const entry = state.history.find((h) => h.id === id);
+    if (!entry) return;
+    setState((s) => {
+      const customDeltas = entry.effects.custom || {};
+      const debtPayments = entry.effects.debts || [];
+      return {
+        ...s,
+        accounts: {
+          checking: s.accounts.checking - entry.effects.checking,
+          savings: s.accounts.savings - entry.effects.savings,
+          rothIra: s.accounts.rothIra - entry.effects.rothIra,
+          contrib401k: s.accounts.contrib401k - entry.effects.contrib401k,
+        },
+        ytd: {
+          contrib401k: s.ytd.contrib401k - entry.effects.ytd401k,
+          rothIra: s.ytd.rothIra - entry.effects.ytdRoth,
+        },
+        customAllocations: s.customAllocations.map((c) => ({
+          ...c,
+          balance: Math.max(0, (c.balance || 0) - (customDeltas[c.id] || 0)),
+          ytd: Math.max(0, (c.ytd || 0) - (customDeltas[c.id] || 0)),
+        })),
+        debts: s.debts.map((d) => {
+          const pay = debtPayments.find((p) => p.id === d.id);
+          return pay ? { ...d, balance: Number(d.balance || 0) + pay.amount } : d;
+        }),
+        history: s.history.filter((h) => h.id !== id),
+        unexportedChanges: (s.unexportedChanges || 0) + 1,
+      };
+    });
+  };
+
+  const resetAll = () => {
+    setState((s) => ({
+      ...s,
+      accounts: { checking: 0, savings: 0, rothIra: 0, contrib401k: 0 },
+      ytd: { contrib401k: 0, rothIra: 0 },
+      history: [],
+      customAllocations: s.customAllocations.map((c) => ({ ...c, balance: 0, ytd: 0 })),
+      completedPhases: [],
+    }));
+    setShowResetConfirm(false);
+  };
+
+  const newYearReset = () => {
+    setState((s) => ({
+      ...s,
+      ytd: { contrib401k: 0, rothIra: 0 },
+      ytdYear: new Date().getFullYear(),
+      newYearPrompted: new Date().getFullYear(),
+      customAllocations: s.customAllocations.map((c) => ({ ...c, ytd: 0 })),
+    }));
+    setShowNewYearPrompt(false);
+  };
+
+  // ============ EXPORT / IMPORT ============
+  const exportJSON = () => JSON.stringify(state, null, 2);
+
+  const downloadBackup = () => {
+    const blob = new Blob([exportJSON()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `paycheck-allocator-${date}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setState((s) => ({ ...s, lastExportAt: Date.now(), unexportedChanges: 0 }));
+  };
+
+  const importFromText = (text) => {
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed !== "object" || !parsed) throw new Error("Invalid format");
+      setState({ ...defaultState, ...parsed, lastExportAt: Date.now(), unexportedChanges: 0 });
+      setShowImportExport(false);
+      return true;
+    } catch (e) {
+      alert("Import failed: " + e.message);
+      return false;
+    }
+  };
+
+  // ============ BACKUP REMINDER LOGIC ============
+  const shouldShowBackupBanner = (() => {
+    const days = state.lastExportAt
+      ? (Date.now() - state.lastExportAt) / (1000 * 60 * 60 * 24)
+      : 999;
+    return (state.unexportedChanges || 0) >= 10 || days >= 7;
+  })();
+
+  const netWorth = state.accounts.checking + state.accounts.savings + state.accounts.rothIra + state.accounts.contrib401k +
+    state.customAllocations.reduce((s, c) => s + (c.balance || 0), 0);
+
+  return (
+    <div className="min-h-screen relative" style={{ background: "#0a0a0a" }}>
+      <div className="fixed inset-0 pointer-events-none" style={{
+        background: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(212,165,116,0.12), transparent)",
+      }} />
+
+      {shouldShowBackupBanner && (
+        <div className="sticky top-0 z-40 px-4 py-2.5 flex items-center gap-2 text-xs animate-fade-in"
+          style={{ background: "rgba(212,165,116,0.15)", borderBottom: "1px solid rgba(212,165,116,0.3)", backdropFilter: "blur(8px)" }}>
+          <IconWarning className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#d4a574" }} />
+          <span className="flex-1" style={{ color: "#d4a574" }}>
+            {state.unexportedChanges || 0} unsaved changes — back up your data
+          </span>
+          <button onClick={downloadBackup}
+            className="px-3 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider active:scale-95"
+            style={{ background: "#d4a574", color: "#0a0a0a" }}>
+            Export
+          </button>
+        </div>
+      )}
+
+      <div className="relative max-w-2xl mx-auto px-4 pt-6 pb-32">
+        <header className="mb-6 animate-fade-in">
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-[10px] uppercase tracking-[0.25em]" style={{ color: "#57534e" }}>
+              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+            </p>
+            <IconSparkles className="w-3.5 h-3.5" style={{ color: "#d4a574" }} />
+          </div>
+          <h1 className="font-display text-4xl leading-none" style={{ fontWeight: 400, color: "#f5f5f4" }}>
+            Paycheck<br /><em className="italic" style={{ color: "#d4a574" }}>Allocator</em>
+          </h1>
+        </header>
+
+        <div className="rounded-3xl p-6 mb-5 animate-fade-in relative overflow-hidden"
+          style={{ background: "linear-gradient(135deg, #161616, #1f1f1f)", border: "1px solid #2a2a2a" }}>
+          <div className="flex items-start justify-between mb-1">
+            <p className="text-[10px] uppercase tracking-[0.25em]" style={{ color: "#a8a29e" }}>Net Worth</p>
+            <IconArrowUp className="w-4 h-4" style={{ color: "#d4a574" }} />
+          </div>
+          <p className="font-display text-5xl mt-1" style={{ fontWeight: 400, color: "#f5f5f4" }}>{fmt(netWorth)}</p>
+          <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+            <MiniStat label="This year saved" value={fmt(state.ytd.contrib401k + state.ytd.rothIra)} />
+            <MiniStat label="Activity entries" value={state.history.length} />
+          </div>
+        </div>
+
+        <div className="flex gap-1 mb-5 p-1 rounded-2xl overflow-x-auto" style={{ background: "#161616" }}>
+          {[
+            { id: "paycheck", label: "Paycheck", icon: IconWallet },
+            { id: "accounts", label: "Accounts", icon: IconPiggy },
+            { id: "debts", label: "Debts", icon: IconCard },
+            { id: "guide", label: "Guide", icon: IconCompass },
+            { id: "settings", label: "Setup", icon: IconSettings },
+          ].map(({ id, label, icon: Ic }) => (
+            <button key={id} onClick={() => setActiveTab(id)}
+              className="flex-1 min-w-[60px] py-3 rounded-xl text-xs font-medium transition flex flex-col items-center gap-1 active:scale-95"
+              style={{
+                background: activeTab === id ? "#0a0a0a" : "transparent",
+                color: activeTab === id ? "#f5f5f4" : "#57534e",
+                boxShadow: activeTab === id ? "0 1px 3px rgba(0,0,0,0.4)" : "none",
+              }}>
+              <Ic className="w-4 h-4" />
+              <span className="text-[10px] tracking-wider uppercase">{label}</span>
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "paycheck" && (
+          <PaycheckTab state={state} update={update} updateNested={updateNested}
+            calc={calc} bonusCalc={bonusCalc}
+            handleAddPaycheck={handleAddPaycheck} handleAddBonus={handleAddBonus}
+            undoEntry={undoEntry} />
+        )}
+        {activeTab === "accounts" && (
+          <AccountsTab state={state} update={update} updateNested={updateNested}
+            setShowResetConfirm={setShowResetConfirm}
+            setShowAddInvestment={setShowAddInvestment}
+            bumpChanges={bumpChanges}
+            editing={editing} setEditing={setEditing} />
+        )}
+        {activeTab === "debts" && <DebtsTab state={state} update={update} bumpChanges={bumpChanges} />}
+        {activeTab === "guide" && <GuideTab state={state} update={update} netWorth={netWorth} calc={calc} />}
+        {activeTab === "settings" && (
+          <SettingsTab state={state} update={update} updateNested={updateNested}
+            downloadBackup={downloadBackup}
+            setShowImportExport={setShowImportExport} />
+        )}
+      </div>
+
+      {showResetConfirm && (
+        <Modal onClose={() => setShowResetConfirm(false)}>
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ background: "rgba(251,113,133,0.15)" }}>
+              <IconWarning className="w-5 h-5" style={{ color: "#fb7185" }} />
+            </div>
+            <div>
+              <h3 className="font-display text-2xl mb-1" style={{ color: "#f5f5f4" }}>Reset everything?</h3>
+              <p className="text-sm" style={{ color: "#a8a29e" }}>
+                Wipes all balances, YTD contributions, history, and completed milestones. Cannot be undone.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setShowResetConfirm(false)}
+              className="flex-1 py-4 rounded-2xl text-sm font-medium active:scale-95"
+              style={{ background: "#1f1f1f", color: "#a8a29e" }}>Cancel</button>
+            <button onClick={resetAll}
+              className="flex-1 py-4 rounded-2xl text-sm font-medium active:scale-95"
+              style={{ background: "#fb7185", color: "#0a0a0a" }}>Reset</button>
+          </div>
+        </Modal>
+      )}
+
+      {showNewYearPrompt && (
+        <Modal onClose={() => { setState((s) => ({ ...s, newYearPrompted: new Date().getFullYear() })); setShowNewYearPrompt(false); }}>
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ background: "rgba(212,165,116,0.15)" }}>
+              <IconSparkles className="w-5 h-5" style={{ color: "#d4a574" }} />
+            </div>
+            <div>
+              <h3 className="font-display text-2xl mb-1" style={{ color: "#f5f5f4" }}>Happy {new Date().getFullYear()}!</h3>
+              <p className="text-sm" style={{ color: "#a8a29e" }}>
+                A new year started. Reset YTD contribution counters? Account balances stay intact.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setState((s) => ({ ...s, newYearPrompted: new Date().getFullYear() })); setShowNewYearPrompt(false); }}
+              className="flex-1 py-4 rounded-2xl text-sm font-medium active:scale-95"
+              style={{ background: "#1f1f1f", color: "#a8a29e" }}>Not yet</button>
+            <button onClick={newYearReset}
+              className="flex-1 py-4 rounded-2xl text-sm font-medium active:scale-95"
+              style={{ background: "#d4a574", color: "#0a0a0a" }}>Reset YTD</button>
+          </div>
+        </Modal>
+      )}
+
+      {showImportExport && (
+        <ImportExportModal
+          onClose={() => setShowImportExport(false)}
+          exportJSON={exportJSON}
+          downloadBackup={downloadBackup}
+          importFromText={importFromText}
+        />
+      )}
+
+      {showAddInvestment && (
+        <AddInvestmentModal
+          onClose={() => setShowAddInvestment(false)}
+          onAdd={(name) => {
+            const colors = ["#c084fc", "#fb7185", "#fbbf24", "#22d3ee", "#a3e635"];
+            const used = state.customAllocations.length;
+            update({
+              customAllocations: [...state.customAllocations, {
+                id: Date.now(), name, percent: 5, color: colors[used % colors.length],
+                capAnnual: 0, ytd: 0, balance: 0,
+              }],
+            });
+            bumpChanges();
+            setShowAddInvestment(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============ MINI COMPONENTS ============
+function MiniStat({ label, value }) {
+  return (
+    <div className="rounded-xl px-3 py-2" style={{ background: "rgba(0,0,0,0.3)" }}>
+      <p className="text-[9px] uppercase tracking-wider" style={{ color: "#57534e" }}>{label}</p>
+      <p className="font-mono-num text-sm mt-0.5" style={{ color: "#f5f5f4" }}>{value}</p>
+    </div>
+  );
+}
+
+function Card({ children, className = "" }) {
+  return (
+    <div className={`rounded-3xl p-5 mb-4 ${className}`}
+      style={{ background: "#161616", border: "1px solid #2a2a2a" }}>
+      {children}
+    </div>
+  );
+}
+
+function SectionLabel({ children, icon: Ic, action }) {
+  return (
+    <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center gap-2">
+        {Ic && <Ic className="w-3.5 h-3.5" style={{ color: "#a8a29e" }} />}
+        <h2 className="text-[10px] uppercase tracking-[0.25em]" style={{ color: "#a8a29e" }}>{children}</h2>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function Modal({ children, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}
+      onClick={onClose}>
+      <div className="w-full max-w-md rounded-3xl p-6 animate-slide-up sm:animate-fade-in"
+        style={{ background: "#161616", border: "1px solid #2a2a2a" }}
+        onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ============ ADD INVESTMENT MODAL ============
+function AddInvestmentModal({ onClose, onAdd }) {
+  const [name, setName] = useState("");
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="font-display text-2xl mb-2" style={{ color: "#f5f5f4" }}>New Investment Account</h3>
+      <p className="text-sm mb-4" style={{ color: "#a8a29e" }}>
+        Examples: HSA, Brokerage, Traditional IRA, Crypto. You can edit the name anytime.
+      </p>
+      <input
+        type="text" autoFocus
+        value={name} onChange={(e) => setName(e.target.value)}
+        placeholder="Account name"
+        className="w-full px-4 py-3 rounded-xl text-base outline-none mb-4"
+        style={{ background: "#1f1f1f", color: "#f5f5f4" }}
+        onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onAdd(name.trim()); }}
+      />
+      <div className="flex gap-2">
+        <button onClick={onClose}
+          className="flex-1 py-4 rounded-2xl text-sm font-medium active:scale-95"
+          style={{ background: "#1f1f1f", color: "#a8a29e" }}>Cancel</button>
+        <button onClick={() => name.trim() && onAdd(name.trim())} disabled={!name.trim()}
+          className="flex-1 py-4 rounded-2xl text-sm font-medium active:scale-95 disabled:opacity-50"
+          style={{ background: "#d4a574", color: "#0a0a0a" }}>Add Account</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ============ IMPORT/EXPORT MODAL ============
+function ImportExportModal({ onClose, exportJSON, downloadBackup, importFromText }) {
+  const [mode, setMode] = useState("export");
+  const [text, setText] = useState("");
+  const [copied, setCopied] = useState(false);
+  const fileRef = useRef(null);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(exportJSON());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      alert("Copy failed. Tap and hold the text below to select, then copy.");
+    }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => importFromText(ev.target.result);
+    reader.readAsText(file);
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="flex gap-1 p-1 rounded-2xl mb-5" style={{ background: "#1f1f1f" }}>
+        {["export", "import"].map((m) => (
+          <button key={m} onClick={() => setMode(m)}
+            className="flex-1 py-2.5 rounded-xl text-xs font-medium uppercase tracking-wider"
+            style={{
+              background: mode === m ? "#0a0a0a" : "transparent",
+              color: mode === m ? "#f5f5f4" : "#57534e",
+            }}>
+            {m}
+          </button>
+        ))}
+      </div>
+
+      {mode === "export" ? (
+        <div>
+          <h3 className="font-display text-2xl mb-1" style={{ color: "#f5f5f4" }}>Export Backup</h3>
+          <p className="text-sm mb-5" style={{ color: "#a8a29e" }}>
+            Save your data so you don't lose it if your browser data gets cleared.
+          </p>
+
+          <button onClick={downloadBackup}
+            className="w-full py-4 rounded-2xl text-sm font-medium uppercase tracking-wider mb-3 active:scale-95 flex items-center justify-center gap-2"
+            style={{ background: "#d4a574", color: "#0a0a0a" }}>
+            <IconDownload className="w-4 h-4" /> Download .json file
+          </button>
+
+          <button onClick={handleCopy}
+            className="w-full py-4 rounded-2xl text-sm font-medium uppercase tracking-wider mb-4 active:scale-95 flex items-center justify-center gap-2"
+            style={{ background: "#1f1f1f", color: "#f5f5f4" }}>
+            <IconCopy className="w-4 h-4" /> {copied ? "Copied!" : "Copy as text"}
+          </button>
+
+          <details className="text-xs" style={{ color: "#a8a29e" }}>
+            <summary className="cursor-pointer mb-2">Show raw data</summary>
+            <textarea readOnly value={exportJSON()}
+              className="w-full h-40 p-3 rounded-xl font-mono-num text-[10px] outline-none resize-none"
+              style={{ background: "#0a0a0a", color: "#a8a29e" }} />
+          </details>
+        </div>
+      ) : (
+        <div>
+          <h3 className="font-display text-2xl mb-1" style={{ color: "#f5f5f4" }}>Import Backup</h3>
+          <p className="text-sm mb-5" style={{ color: "#a8a29e" }}>
+            ⚠️ This replaces all your current data.
+          </p>
+
+          <input ref={fileRef} type="file" accept=".json,application/json"
+            onChange={handleFileSelect} className="hidden" />
+          <button onClick={() => fileRef.current?.click()}
+            className="w-full py-4 rounded-2xl text-sm font-medium uppercase tracking-wider mb-3 active:scale-95 flex items-center justify-center gap-2"
+            style={{ background: "#d4a574", color: "#0a0a0a" }}>
+            <IconUpload className="w-4 h-4" /> Choose .json file
+          </button>
+
+          <p className="text-[10px] uppercase tracking-wider mb-2 mt-4" style={{ color: "#57534e" }}>
+            Or paste exported text:
+          </p>
+          <textarea value={text} onChange={(e) => setText(e.target.value)}
+            placeholder='{"paycheckAmount":...}'
+            className="w-full h-32 p-3 rounded-xl font-mono-num text-[10px] outline-none mb-3"
+            style={{ background: "#1f1f1f", color: "#f5f5f4" }} />
+          <button onClick={() => importFromText(text)} disabled={!text.trim()}
+            className="w-full py-3 rounded-2xl text-xs font-medium uppercase tracking-wider active:scale-95 disabled:opacity-50"
+            style={{ background: "#1f1f1f", color: "#f5f5f4" }}>
+            Import from text
+          </button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ============ DUAL SLIDER ============
+function DualSlider({ label, sublabel, percent, dollar, onPercentChange, onLabelChange, color, max = 50, base, editable }) {
+  const [editingDollar, setEditingDollar] = useState(false);
+  const [tempDollar, setTempDollar] = useState("");
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [tempLabel, setTempLabel] = useState("");
+
+  const handleDollarSubmit = () => {
+    const v = parseFloat(tempDollar);
+    if (!isNaN(v) && base > 0) {
+      const newPct = Math.min(max, Math.max(0, (v / base) * 100));
+      onPercentChange(newPct);
+    }
+    setEditingDollar(false);
+  };
+
+  const handleLabelSubmit = () => {
+    if (tempLabel.trim() && onLabelChange) onLabelChange(tempLabel.trim());
+    setEditingLabel(false);
+  };
+
+  return (
+    <div className="mb-5 last:mb-0">
+      <div className="flex items-center justify-between mb-2.5">
+        <div className="flex items-center gap-2">
+          {editingLabel ? (
+            <input type="text" autoFocus value={tempLabel}
+              onChange={(e) => setTempLabel(e.target.value)}
+              onBlur={handleLabelSubmit}
+              onKeyDown={(e) => { if (e.key === "Enter") handleLabelSubmit(); }}
+              className="text-sm font-medium bg-transparent outline-none border-b"
+              style={{ color: "#f5f5f4", borderColor: "#57534e", maxWidth: "150px" }} />
+          ) : (
+            <button onClick={() => { if (editable) { setTempLabel(label); setEditingLabel(true); } }}
+              className={editable ? "active:scale-95 transition" : ""}
+              style={{ cursor: editable ? "pointer" : "default" }}>
+              <span className="text-sm font-medium" style={{ color: "#f5f5f4" }}>{label}</span>
+            </button>
+          )}
+          {sublabel && <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={{ background: "#1f1f1f", color: "#57534e" }}>{sublabel}</span>}
+          {editable && !editingLabel && (
+            <IconEdit className="w-3 h-3" style={{ color: "#57534e" }} />
+          )}
+        </div>
+        <span className="text-[10px] font-mono-num px-1.5 py-0.5 rounded"
+          style={{ background: "#1f1f1f", color: "#a8a29e" }}>{(Math.round(percent * 10) / 10)}%</span>
+      </div>
+
+      <div className="flex items-center gap-3 mb-2.5">
+        {editingDollar ? (
+          <div className="flex items-center gap-1 flex-1">
+            <span className="font-display text-2xl" style={{ color: "#57534e" }}>$</span>
+            <input type="text" inputMode="decimal" value={tempDollar} autoFocus
+              onChange={(e) => {
+                if (/^\d*\.?\d*$/.test(e.target.value)) setTempDollar(e.target.value);
+              }}
+              onBlur={handleDollarSubmit}
+              onKeyDown={(e) => { if (e.key === "Enter") handleDollarSubmit(); }}
+              className="font-display text-2xl bg-transparent outline-none flex-1 min-w-0"
+              style={{ fontWeight: 500, color: "#f5f5f4" }} />
+          </div>
+        ) : (
+          <button onClick={() => { setTempDollar(dollar.toFixed(2)); setEditingDollar(true); }}
+            className="flex items-baseline gap-0.5 active:scale-95 transition">
+            <span className="font-display text-2xl" style={{ color: "#57534e" }}>$</span>
+            <span className="font-display text-2xl" style={{ fontWeight: 500, color: "#f5f5f4" }}>
+              {dollar.toFixed(2)}
+            </span>
+            <IconEdit className="w-3 h-3 ml-1.5" style={{ color: "#57534e" }} />
+          </button>
+        )}
+      </div>
+
+      <input type="range" min="0" max={max} step="0.5" value={Math.round(percent * 2) / 2}
+        onChange={(e) => onPercentChange(Number(e.target.value))}
+        className="slider"
+        style={{ background: `linear-gradient(to right, ${color} 0%, ${color} ${(percent / max) * 100}%, #1f1f1f ${(percent / max) * 100}%, #1f1f1f 100%)` }} />
+    </div>
+  );
+}
+
+// ============ PAYCHECK TAB ============
+function PaycheckTab({ state, update, updateNested, calc, bonusCalc, handleAddPaycheck, handleAddBonus, undoEntry }) {
+  return (
+    <div className="animate-fade-in">
+      <Card>
+        <SectionLabel icon={IconBank}>Gross Paycheck</SectionLabel>
+        <div className="flex items-baseline gap-1">
+          <span className="font-display text-3xl" style={{ color: "#57534e" }}>$</span>
+          <NumInput value={state.paycheckAmount}
+            onChange={(v) => update({ paycheckAmount: v })}
+            className="font-display text-5xl bg-transparent outline-none w-full"
+            style={{ fontWeight: 500, color: "#f5f5f4" }} />
+        </div>
+        <p className="text-xs mt-2" style={{ color: "#57534e" }}>
+          Biweekly · {fmt(state.paycheckAmount * 26)} annually
+        </p>
+      </Card>
+
+      <Card>
+        <SectionLabel icon={IconActivity}>Allocations</SectionLabel>
+
+        <DualSlider label="401(k)" sublabel="Pre-tax"
+          percent={state.contributions.contrib401k}
+          dollar={calc.c401kEmployee}
+          onPercentChange={(v) => updateNested("contributions", { contrib401k: v })}
+          color="#60a5fa" base={state.paycheckAmount} />
+
+        {calc.match > 0 && (
+          <div className="-mt-3 mb-5 ml-1 pl-3 border-l-2 text-xs flex items-center gap-2 flex-wrap"
+            style={{ borderColor: "#60a5fa", color: "#a8a29e" }}>
+            <span>+ Match</span>
+            <span className="font-mono-num" style={{ color: "#60a5fa" }}>{fmt(calc.match)}</span>
+            <span style={{ color: "#57534e" }}>→ {fmt(calc.c401kTotal)} total</span>
+          </div>
+        )}
+
+        <DualSlider label="Roth IRA" sublabel="Post-tax"
+          percent={state.contributions.rothIra}
+          dollar={calc.roth}
+          onPercentChange={(v) => updateNested("contributions", { rothIra: v })}
+          color="#d4a574" base={state.paycheckAmount} />
+
+        <DualSlider label="Emergency Fund"
+          percent={state.contributions.emergency}
+          dollar={calc.emergency}
+          onPercentChange={(v) => updateNested("contributions", { emergency: v })}
+          color="#84cc16" base={state.paycheckAmount} />
+
+        {state.customAllocations.map((c) => (
+          <DualSlider key={c.id} label={c.name}
+            editable
+            onLabelChange={(newName) => update({
+              customAllocations: state.customAllocations.map((x) => x.id === c.id ? { ...x, name: newName } : x)
+            })}
+            percent={c.percent}
+            dollar={(state.paycheckAmount * c.percent) / 100}
+            onPercentChange={(v) => update({
+              customAllocations: state.customAllocations.map((x) => x.id === c.id ? { ...x, percent: v } : x)
+            })}
+            color={c.color} base={state.paycheckAmount} />
+        ))}
+
+        {state.customAllocations.length === 0 && (
+          <p className="text-xs text-center mt-3 mb-1" style={{ color: "#57534e" }}>
+            Add custom investment accounts from the <span style={{ color: "#a8a29e" }}>Accounts</span> tab
+          </p>
+        )}
+      </Card>
+
+      <Card>
+        <SectionLabel icon={IconActivity}>Where Each Dollar Goes</SectionLabel>
+        <CashFlowChart calc={calc} state={state} />
+      </Card>
+
+      <ExpensesCard state={state} update={update} />
+
+      <Card className="!p-0 overflow-hidden">
+        <div className="p-5">
+          <SectionLabel>Breakdown</SectionLabel>
+          <div className="space-y-2 text-sm">
+            <Row label="Gross" value={fmt(state.paycheckAmount)} bold />
+            <Row label="− 401(k)" value={`-${fmt(calc.c401kEmployee)}`} dim />
+            <Row label={`− Tax (~${state.taxRate}%)`} value={`-${fmt(calc.tax)}`} dim />
+            <div className="my-2 h-px" style={{ background: "#2a2a2a" }} />
+            <Row label="Take-home" value={fmt(calc.takeHome)} bold />
+            <Row label="− Roth IRA" value={`-${fmt(calc.roth)}`} dim />
+            <Row label="− Emergency" value={`-${fmt(calc.emergency)}`} dim />
+            {calc.customTotal > 0 && <Row label="− Custom Investments" value={`-${fmt(calc.customTotal)}`} dim />}
+            <Row label="− Expenses" value={`-${fmt(calc.totalExpenses)}`} dim />
+            {calc.totalDebt > 0 && <Row label="− Debt Payments" value={`-${fmt(calc.totalDebt)}`} dim />}
+            <div className="my-2 h-px" style={{ background: "#2a2a2a" }} />
+            <Row label="To Checking" value={fmt(calc.remaining)} bold danger={calc.remaining < 0} />
+          </div>
+        </div>
+
+        <button onClick={handleAddPaycheck} disabled={calc.remaining < 0}
+          className="w-full py-5 text-sm font-medium uppercase tracking-[0.2em] active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
+          style={{
+            background: calc.remaining < 0 ? "#1f1f1f" : "#d4a574",
+            color: calc.remaining < 0 ? "#57534e" : "#0a0a0a",
+          }}>
+          <IconPlus className="w-4 h-4" /> Add Paycheck
+        </button>
+        {calc.remaining < 0 && (
+          <p className="px-5 py-3 text-xs text-center" style={{ color: "#fb7185", background: "rgba(251,113,133,0.05)" }}>
+            Allocations exceed take-home pay
+          </p>
+        )}
+      </Card>
+
+      {state.history.length > 0 && (
+        <Card>
+          <SectionLabel>Recent Activity</SectionLabel>
+          <div className="space-y-1 max-h-64 overflow-y-auto -mx-2">
+            {state.history.slice(0, 30).map((item) => {
+              const d = new Date(item.date);
+              return (
+                <div key={item.id} className="flex items-center gap-3 px-2 py-2.5 rounded-xl">
+                  <span className="text-base">{item.type === "bonus" ? "🎁" : "💵"}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm" style={{ color: "#f5f5f4" }}>{item.type === "bonus" ? "Bonus" : "Paycheck"}</p>
+                    <p className="text-[10px]" style={{ color: "#57534e" }}>
+                      {d.toLocaleDateString()} · {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                  <span className="font-mono-num text-sm" style={{ color: "#f5f5f4" }}>{fmt(item.gross)}</span>
+                  <button onClick={() => undoEntry(item.id)}
+                    className="p-2 rounded-full active:scale-90"
+                    style={{ color: "#57534e" }}>
+                    <IconTrash className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      <Card className="!p-0 overflow-hidden">
+        <div className="p-5">
+          <SectionLabel icon={IconGift}>Yearly Bonus</SectionLabel>
+          <p className="text-xs mb-4" style={{ color: "#a8a29e" }}>
+            Distributed using your paycheck percentages.
+          </p>
+
+          <div className="flex items-baseline gap-1 mb-4">
+            <span className="font-display text-2xl" style={{ color: "#57534e" }}>$</span>
+            <NumInput value={state.yearlyBonus}
+              onChange={(v) => update({ yearlyBonus: v })}
+              className="font-display text-3xl bg-transparent outline-none flex-1 min-w-0"
+              style={{ fontWeight: 500, color: "#f5f5f4" }} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs mb-4">
+            <BonusStat label="To 401(k)" value={fmt(bonusCalc.c401kTotal)}
+              note={bonusCalc.match > 0 ? `+${fmt(bonusCalc.match)} match` : null} />
+            <BonusStat label="To Roth" value={fmt(bonusCalc.roth)} />
+            <BonusStat label="To Emergency" value={fmt(bonusCalc.emergency)} />
+            <BonusStat label="To Checking" value={fmt(bonusCalc.remaining)} note={`${fmt(bonusCalc.tax)} tax`} />
+          </div>
+        </div>
+        <button onClick={handleAddBonus} disabled={bonusCalc.remaining < 0}
+          className="w-full py-5 text-sm font-medium uppercase tracking-[0.2em] active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
+          style={{
+            background: bonusCalc.remaining < 0 ? "#1f1f1f" : "#f5f5f4",
+            color: bonusCalc.remaining < 0 ? "#57534e" : "#0a0a0a",
+          }}>
+          <IconGift className="w-4 h-4" /> Deposit Bonus
+        </button>
+      </Card>
+    </div>
+  );
+}
+
+function ExpensesCard({ state, update }) {
+  const [editingId, setEditingId] = useState(null);
+  const [newName, setNewName] = useState("");
+  const [newAmount, setNewAmount] = useState(0);
+
+  const updateExp = (id, field, value) => {
+    update({ expenses: state.expenses.map((e) =>
+      e.id === id ? { ...e, [field]: field === "amount" ? Number(value) || 0 : value } : e) });
+  };
+  const deleteExp = (id) => update({ expenses: state.expenses.filter((e) => e.id !== id) });
+  const addExp = () => {
+    if (!newName.trim()) return;
+    update({ expenses: [...state.expenses, { id: Date.now(), name: newName.trim(), amount: Number(newAmount) || 0 }] });
+    setNewName(""); setNewAmount(0);
+  };
+
+  const total = state.expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+
+  return (
+    <Card>
+      <SectionLabel>Fixed Expenses</SectionLabel>
+      <div className="space-y-1 mb-3">
+        {state.expenses.map((expense) => (
+          <div key={expense.id} className="flex items-center gap-2 py-2.5 rounded-xl px-2 -mx-2"
+            style={{ background: editingId === expense.id ? "#1f1f1f" : "transparent" }}>
+            {editingId === expense.id ? (
+              <>
+                <input type="text" value={expense.name} onChange={(e) => updateExp(expense.id, "name", e.target.value)}
+                  className="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
+                  style={{ background: "#0a0a0a", color: "#f5f5f4" }} />
+                <NumInput value={expense.amount}
+                  onChange={(v) => updateExp(expense.id, "amount", v)}
+                  className="w-24 px-2 py-1.5 rounded-lg text-sm font-mono-num outline-none"
+                  style={{ background: "#0a0a0a", color: "#f5f5f4" }} />
+                <button onClick={() => setEditingId(null)} className="p-1.5"><IconCheck className="w-4 h-4" style={{ color: "#84cc16" }} /></button>
+                <button onClick={() => deleteExp(expense.id)} className="p-1.5"><IconTrash className="w-4 h-4" style={{ color: "#fb7185" }} /></button>
+              </>
+            ) : (
+              <button onClick={() => setEditingId(expense.id)}
+                className="flex-1 flex items-center gap-3 active:scale-[0.99] py-1">
+                <span className="flex-1 text-left text-sm" style={{ color: "#f5f5f4" }}>{expense.name}</span>
+                <span className="font-mono-num text-base" style={{ color: "#f5f5f4" }}>{fmt(expense.amount)}</span>
+                <IconChevron className="w-4 h-4" style={{ color: "#57534e" }} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex gap-2 mb-3">
+        <input type="text" placeholder="New expense" value={newName} onChange={(e) => setNewName(e.target.value)}
+          className="flex-1 px-3 py-3 rounded-xl text-sm outline-none"
+          style={{ background: "#1f1f1f", color: "#f5f5f4" }} />
+        <NumInput value={newAmount} onChange={setNewAmount} placeholder="$"
+          className="w-24 px-3 py-3 rounded-xl text-sm font-mono-num outline-none"
+          style={{ background: "#1f1f1f", color: "#f5f5f4" }} />
+        <button onClick={addExp}
+          className="w-12 rounded-xl active:scale-95 flex items-center justify-center"
+          style={{ background: "#f5f5f4", color: "#0a0a0a" }}>
+          <IconPlus className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="flex justify-between items-baseline pt-3" style={{ borderTop: "1px solid #2a2a2a" }}>
+        <span className="text-xs uppercase tracking-wider" style={{ color: "#57534e" }}>Total</span>
+        <span className="font-display text-xl" style={{ color: "#f5f5f4" }}>{fmt(total)}</span>
+      </div>
+    </Card>
+  );
+}
+
+function CashFlowChart({ calc, state }) {
+  const gross = calc.gross;
+  if (!gross) return null;
+
+  const flows = [
+    { label: "401(k)", amount: calc.c401kEmployee, color: "#60a5fa" },
+    { label: "Tax", amount: calc.tax, color: "#fb7185" },
+    { label: "Roth IRA", amount: calc.roth, color: "#d4a574" },
+    { label: "Emergency", amount: calc.emergency, color: "#84cc16" },
+    ...state.customAllocations.map((c) => ({
+      label: c.name, amount: (gross * c.percent) / 100, color: c.color,
+    })),
+    { label: "Expenses", amount: calc.totalExpenses, color: "#c084fc" },
+    ...(calc.totalDebt > 0 ? [{ label: "Debts", amount: calc.totalDebt, color: "#fbbf24" }] : []),
+    { label: "Checking", amount: Math.max(0, calc.remaining), color: "#f5f5f4" },
+  ].filter((f) => f.amount > 0);
+
+  const totalFlow = flows.reduce((s, f) => s + f.amount, 0);
+
+  return (
+    <div>
+      <div className="h-3 rounded-full overflow-hidden flex mb-4" style={{ background: "#1f1f1f" }}>
+        {flows.map((f, i) => (
+          <div key={i} style={{
+            width: `${(f.amount / totalFlow) * 100}%`,
+            background: f.color,
+          }} />
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        {flows.map((f, i) => {
+          const pct = (f.amount / gross) * 100;
+          return (
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: f.color }} />
+              <span className="text-sm flex-1" style={{ color: "#f5f5f4" }}>{f.label}</span>
+              <span className="text-[10px] font-mono-num" style={{ color: "#57534e" }}>
+                {pct.toFixed(1)}%
+              </span>
+              <span className="font-mono-num text-sm w-20 text-right" style={{ color: "#f5f5f4" }}>
+                {fmt(f.amount)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {calc.match > 0 && (
+        <div className="mt-4 pt-3 flex items-center gap-2 text-xs" style={{ borderTop: "1px solid #2a2a2a", color: "#a8a29e" }}>
+          <IconSparkles className="w-3 h-3" style={{ color: "#60a5fa" }} />
+          <span>+ Employer match adds <span className="font-mono-num" style={{ color: "#60a5fa" }}>{fmt(calc.match)}</span> to 401(k) (free money)</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============ ACCOUNTS TAB ============
+function AccountsTab({ state, update, updateNested, setShowResetConfirm, setShowAddInvestment, bumpChanges, editing, setEditing }) {
+  const accounts = [
+    { key: "checking", label: "Checking", icon: IconWallet, color: "#f5f5f4" },
+    { key: "savings", label: "Emergency", icon: IconShield, color: "#84cc16" },
+    { key: "rothIra", label: "Roth IRA", icon: IconPiggy, color: "#d4a574" },
+    { key: "contrib401k", label: "401(k)", icon: IconTrending, color: "#60a5fa" },
+  ];
+
+  const deleteCustom = (id) => {
+    if (!confirm("Remove this investment account? Its balance and YTD will be deleted, but this won't affect other accounts.")) return;
+    update({ customAllocations: state.customAllocations.filter((x) => x.id !== id) });
+    bumpChanges();
+  };
+
+  return (
+    <div className="animate-fade-in">
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        {accounts.map(({ key, label, icon: Ic, color }) => (
+          <AccountCard key={key} accountKey={key} label={label} Icon={Ic} color={color}
+            value={state.accounts[key]} state={state} update={update}
+            editing={editing} setEditing={setEditing} />
+        ))}
+        {state.customAllocations.map((c) => (
+          <CustomAccountCard key={c.id} c={c} state={state} update={update} onDelete={() => deleteCustom(c.id)} />
+        ))}
+      </div>
+
+      <button onClick={() => setShowAddInvestment(true)}
+        className="w-full py-4 rounded-2xl text-xs font-medium uppercase tracking-wider mb-4 active:scale-[0.98] flex items-center justify-center gap-2"
+        style={{ background: "#161616", color: "#a8a29e", border: "1px dashed #2a2a2a" }}>
+        <IconPlus className="w-3.5 h-3.5" /> Add Investment Account
+      </button>
+
+      <Card>
+        <SectionLabel icon={IconTarget}>{new Date().getFullYear()} Limits</SectionLabel>
+        <ContributionTracker label="401(k)" color="#60a5fa" note="Employee contributions"
+          ytd={state.ytd.contrib401k} cap={state.caps.contrib401k}
+          onYtdEdit={(v) => updateNested("ytd", { contrib401k: v })}
+          onCapEdit={(v) => updateNested("caps", { contrib401k: v })} />
+        <div className="my-5 h-px" style={{ background: "#2a2a2a" }} />
+        <ContributionTracker label="Roth IRA" color="#d4a574" note="Annual personal limit"
+          ytd={state.ytd.rothIra} cap={state.caps.rothIra}
+          onYtdEdit={(v) => updateNested("ytd", { rothIra: v })}
+          onCapEdit={(v) => updateNested("caps", { rothIra: v })} />
+        {state.customAllocations.filter((c) => c.capAnnual > 0).map((c) => (
+          <div key={c.id}>
+            <div className="my-5 h-px" style={{ background: "#2a2a2a" }} />
+            <ContributionTracker label={c.name} color={c.color} note="Custom limit"
+              ytd={c.ytd || 0} cap={c.capAnnual}
+              onYtdEdit={(v) => update({
+                customAllocations: state.customAllocations.map((x) => x.id === c.id ? { ...x, ytd: v } : x)
+              })}
+              onCapEdit={(v) => update({
+                customAllocations: state.customAllocations.map((x) => x.id === c.id ? { ...x, capAnnual: v } : x)
+              })} />
+          </div>
+        ))}
+      </Card>
+
+      <button onClick={() => setShowResetConfirm(true)}
+        className="w-full py-4 rounded-2xl text-xs font-medium uppercase tracking-wider active:scale-[0.98] flex items-center justify-center gap-2"
+        style={{ background: "#161616", color: "#fb7185", border: "1px solid #2a2a2a" }}>
+        <IconRotate className="w-3.5 h-3.5" /> Reset All Accounts
+      </button>
+    </div>
+  );
+}
+
+function AccountCard({ accountKey, label, Icon: Ic, color, value, state, update, editing, setEditing }) {
+  const isEditing = editing.type === "account" && editing.key === accountKey;
+  return (
+    <div className="rounded-3xl p-4 relative"
+      style={{ background: "#161616", border: "1px solid #2a2a2a", borderTop: `2px solid ${color}` }}>
+      <div className="flex items-center justify-between mb-3">
+        <Ic className="w-4 h-4" style={{ color }} />
+        <button onClick={() => setEditing({ type: "account", key: accountKey, value: String(value) })}
+          className="p-1 active:scale-90"><IconEdit className="w-3 h-3" style={{ color: "#57534e" }} /></button>
+      </div>
+      <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: "#a8a29e" }}>{label}</p>
+      {isEditing ? (
+        <NumInput value={value} autoFocus
+          onChange={(v) => update({ accounts: { ...state.accounts, [accountKey]: v } })}
+          onBlur={() => setEditing({ type: null, key: null, value: "" })}
+          onKeyDown={(e) => { if (e.key === "Enter") setEditing({ type: null, key: null, value: "" }); }}
+          className="font-display text-xl bg-transparent outline-none w-full"
+          style={{ color: "#f5f5f4" }} />
+      ) : (
+        <p className="font-display text-2xl truncate" style={{ fontWeight: 500, color: "#f5f5f4" }}>
+          {fmtShort(value)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CustomAccountCard({ c, state, update, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <div className="rounded-3xl p-4 relative"
+      style={{ background: "#161616", border: "1px solid #2a2a2a", borderTop: `2px solid ${c.color}` }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="w-4 h-4 rounded-full" style={{ background: c.color }} />
+        <div className="flex items-center gap-2">
+          <button onClick={() => setEditing(true)}
+            className="p-1 active:scale-90"><IconEdit className="w-3 h-3" style={{ color: "#57534e" }} /></button>
+          {onDelete && (
+            <button onClick={onDelete} className="p-1 active:scale-90">
+              <IconTrash className="w-3 h-3" style={{ color: "#fb7185" }} />
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="text-[10px] uppercase tracking-wider mb-1 truncate" style={{ color: "#a8a29e" }}>{c.name}</p>
+      {editing ? (
+        <NumInput value={c.balance || 0} autoFocus
+          onChange={(v) => update({
+            customAllocations: state.customAllocations.map((x) => x.id === c.id ? { ...x, balance: v } : x)
+          })}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(e) => { if (e.key === "Enter") setEditing(false); }}
+          className="font-display text-xl bg-transparent outline-none w-full"
+          style={{ color: "#f5f5f4" }} />
+      ) : (
+        <p className="font-display text-2xl truncate" style={{ fontWeight: 500, color: "#f5f5f4" }}>
+          {fmtShort(c.balance || 0)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ContributionTracker({ label, color, note, ytd, cap, onYtdEdit, onCapEdit }) {
+  const [editingYtd, setEditingYtd] = useState(false);
+  const [editingCap, setEditingCap] = useState(false);
+  const pct = cap > 0 ? Math.min(100, (ytd / cap) * 100) : 0;
+  const remaining = Math.max(0, cap - ytd);
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <div>
+          <h3 className="font-display text-lg" style={{ color: "#f5f5f4" }}>{label}</h3>
+          <p className="text-[10px]" style={{ color: "#57534e" }}>{note}</p>
+        </div>
+        <div className="flex gap-3 text-[10px] uppercase tracking-wider">
+          <button onClick={() => setEditingYtd(true)}
+            style={{ color: "#a8a29e" }} className="active:opacity-60">YTD</button>
+          <button onClick={() => setEditingCap(true)}
+            style={{ color: "#a8a29e" }} className="active:opacity-60">MAX</button>
+        </div>
+      </div>
+
+      {editingYtd && (
+        <div className="flex items-center gap-2 mb-3 p-2 rounded-xl" style={{ background: "#1f1f1f" }}>
+          <span className="text-xs" style={{ color: "#57534e" }}>YTD:</span>
+          <NumInput value={ytd} autoFocus onChange={onYtdEdit}
+            onBlur={() => setEditingYtd(false)}
+            onKeyDown={(e) => { if (e.key === "Enter") setEditingYtd(false); }}
+            className="flex-1 font-mono-num bg-transparent outline-none text-sm"
+            style={{ color: "#f5f5f4" }} />
+        </div>
+      )}
+      {editingCap && (
+        <div className="flex items-center gap-2 mb-3 p-2 rounded-xl" style={{ background: "#1f1f1f" }}>
+          <span className="text-xs" style={{ color: "#57534e" }}>MAX:</span>
+          <NumInput value={cap} autoFocus onChange={onCapEdit}
+            onBlur={() => setEditingCap(false)}
+            onKeyDown={(e) => { if (e.key === "Enter") setEditingCap(false); }}
+            className="flex-1 font-mono-num bg-transparent outline-none text-sm"
+            style={{ color: "#f5f5f4" }} />
+        </div>
+      )}
+
+      <div className="flex justify-between text-xs mb-2">
+        <span style={{ color: "#a8a29e" }}>Limit: {fmt(cap)}</span>
+        <span className="font-mono-num" style={{ color: "#f5f5f4" }}>{pct.toFixed(1)}%</span>
+      </div>
+      <div className="h-2 rounded-full overflow-hidden" style={{ background: "#1f1f1f" }}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      <div className="flex justify-between text-[11px] mt-2 font-mono-num">
+        <span style={{ color: "#a8a29e" }}>{fmt(ytd)} contributed</span>
+        <span style={{ color: "#57534e" }}>{fmt(remaining)} to max</span>
+      </div>
+    </div>
+  );
+}
+
+// ============ DEBTS TAB ============
+function DebtsTab({ state, update, bumpChanges }) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ name: "", balance: 0, apr: 0, minPayment: 0, extraPayment: 0 });
+
+  const addDebt = () => {
+    if (!form.name.trim()) return;
+    update({ debts: [...state.debts, {
+      id: Date.now(), name: form.name.trim(),
+      balance: Number(form.balance) || 0,
+      apr: Number(form.apr) || 0,
+      minPayment: Number(form.minPayment) || 0,
+      extraPayment: Number(form.extraPayment) || 0,
+    }] });
+    setForm({ name: "", balance: 0, apr: 0, minPayment: 0, extraPayment: 0 });
+    setAdding(false);
+    if (bumpChanges) bumpChanges();
+  };
+
+  const totalDebt = state.debts.reduce((s, d) => s + Number(d.balance || 0), 0);
+  const monthlyPayments = state.debts.reduce((s, d) => s + Number(d.minPayment || 0) + Number(d.extraPayment || 0), 0) * 2;
+
+  return (
+    <div className="animate-fade-in">
+      <Card>
+        <SectionLabel icon={IconCard}>Total Debt</SectionLabel>
+        <p className="font-display text-4xl" style={{ color: state.debts.length > 0 ? "#fb7185" : "#57534e", fontWeight: 500 }}>
+          {fmt(totalDebt)}
+        </p>
+        {state.debts.length > 0 && (
+          <p className="text-xs mt-2" style={{ color: "#a8a29e" }}>
+            ~{fmt(monthlyPayments)}/month in payments
+          </p>
+        )}
+      </Card>
+
+      {state.debts.length === 0 && !adding && (
+        <Card>
+          <p className="text-center text-sm py-4" style={{ color: "#a8a29e" }}>
+            No debts tracked. Add credit cards, loans, etc. to track payoff.
+          </p>
+        </Card>
+      )}
+
+      {state.debts
+        .slice()
+        .sort((a, b) => Number(b.apr || 0) - Number(a.apr || 0))
+        .map((debt) => (
+        <DebtCard key={debt.id} debt={debt} state={state} update={update} bumpChanges={bumpChanges} />
+      ))}
+
+      {adding ? (
+        <Card>
+          <SectionLabel>New Debt</SectionLabel>
+          <div className="space-y-3">
+            <input type="text" placeholder="Name (e.g. Credit Card)" value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+              style={{ background: "#1f1f1f", color: "#f5f5f4" }} />
+            <div className="grid grid-cols-2 gap-2">
+              <LabeledInput label="Balance $" value={form.balance} onChange={(v) => setForm({ ...form, balance: v })} />
+              <LabeledInput label="APR %" value={form.apr} onChange={(v) => setForm({ ...form, apr: v })} />
+              <LabeledInput label="Min Pay $" value={form.minPayment} onChange={(v) => setForm({ ...form, minPayment: v })} />
+              <LabeledInput label="Extra $" value={form.extraPayment} onChange={(v) => setForm({ ...form, extraPayment: v })} />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setAdding(false)}
+                className="flex-1 py-3 rounded-xl text-sm font-medium active:scale-95"
+                style={{ background: "#1f1f1f", color: "#a8a29e" }}>Cancel</button>
+              <button onClick={addDebt}
+                className="flex-1 py-3 rounded-xl text-sm font-medium active:scale-95"
+                style={{ background: "#d4a574", color: "#0a0a0a" }}>Add Debt</button>
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <button onClick={() => setAdding(true)}
+          className="w-full py-4 rounded-2xl text-sm font-medium active:scale-[0.98] flex items-center justify-center gap-2"
+          style={{ background: "#161616", color: "#f5f5f4", border: "1px dashed #2a2a2a" }}>
+          <IconPlus className="w-4 h-4" /> Add Debt
+        </button>
+      )}
+    </div>
+  );
+}
+
+function LabeledInput({ label, value, onChange }) {
+  return (
+    <div>
+      <label className="text-[10px] uppercase tracking-wider block mb-1" style={{ color: "#57534e" }}>{label}</label>
+      <NumInput value={value} onChange={onChange}
+        className="w-full px-3 py-2.5 rounded-xl text-sm font-mono-num outline-none"
+        style={{ background: "#1f1f1f", color: "#f5f5f4" }} />
+    </div>
+  );
+}
+
+function DebtCard({ debt, state, update, bumpChanges }) {
+  const [expanded, setExpanded] = useState(false);
+  const totalPay = Number(debt.minPayment || 0) + Number(debt.extraPayment || 0);
+  const monthsLeft = totalPay > 0 && debt.balance > 0
+    ? Math.ceil(Number(debt.balance) / (totalPay * 2)) : 0;
+
+  const updateField = (field, value) => {
+    update({ debts: state.debts.map((d) => d.id === debt.id ? { ...d, [field]: Number(value) || 0 } : d) });
+  };
+  const updateName = (value) => {
+    update({ debts: state.debts.map((d) => d.id === debt.id ? { ...d, name: value } : d) });
+  };
+  const remove = () => {
+    if (!confirm("Remove this debt?")) return;
+    update({ debts: state.debts.filter((d) => d.id !== debt.id) });
+    if (bumpChanges) bumpChanges();
+  };
+
+  return (
+    <Card>
+      <button onClick={() => setExpanded(!expanded)}
+        className="w-full text-left flex items-center gap-3 active:scale-[0.99]">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium" style={{ color: "#f5f5f4" }}>{debt.name}</p>
+          <p className="text-[10px]" style={{ color: "#57534e" }}>
+            {Number(debt.apr || 0).toFixed(2)}% APR · {fmt(totalPay)}/paycheck
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="font-display text-xl" style={{ color: "#fb7185" }}>{fmt(debt.balance || 0)}</p>
+          {monthsLeft > 0 && (
+            <p className="text-[10px]" style={{ color: "#57534e" }}>~{monthsLeft}mo left</p>
+          )}
+        </div>
+        <IconChevron className="w-4 h-4 transition" style={{ color: "#57534e", transform: expanded ? "rotate(90deg)" : "" }} />
+      </button>
+
+      {expanded && (
+        <div className="mt-4 pt-4 space-y-3 animate-fade-in" style={{ borderTop: "1px solid #2a2a2a" }}>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider block mb-1" style={{ color: "#57534e" }}>Name</label>
+            <input type="text" value={debt.name} onChange={(e) => updateName(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+              style={{ background: "#1f1f1f", color: "#f5f5f4" }} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <LabeledInput label="Balance" value={debt.balance} onChange={(v) => updateField("balance", v)} />
+            <LabeledInput label="APR %" value={debt.apr} onChange={(v) => updateField("apr", v)} />
+            <LabeledInput label="Min Pay" value={debt.minPayment} onChange={(v) => updateField("minPayment", v)} />
+            <LabeledInput label="Extra Pay" value={debt.extraPayment} onChange={(v) => updateField("extraPayment", v)} />
+          </div>
+          <button onClick={remove}
+            className="w-full py-3 rounded-xl text-xs uppercase tracking-wider font-medium active:scale-95"
+            style={{ background: "rgba(251,113,133,0.1)", color: "#fb7185" }}>
+            Remove Debt
+          </button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ============ GUIDE TAB (recommendations) ============
+function GuideTab({ state, update, netWorth, calc }) {
+  const monthlyExpenses = calc.totalExpenses * 2;
+  const targetEmergency = monthlyExpenses * 3;
+  const emergencyProgress = state.accounts.savings;
+  const has401kContribution = state.contributions.contrib401k > 0;
+  const isCapturingFullMatch = state.contributions.contrib401k >= state.matchCap;
+  const highInterestDebt = state.debts.filter(d => Number(d.apr || 0) > 7);
+  const totalHighInterest = highInterestDebt.reduce((s, d) => s + Number(d.balance || 0), 0);
+  const allDebt = state.debts.reduce((s, d) => s + Number(d.balance || 0), 0);
+  const isMaxing401k = state.ytd.contrib401k >= state.caps.contrib401k * 0.95;
+  const isMaxingRoth = state.ytd.rothIra >= state.caps.rothIra * 0.95;
+
+  const phases = [
+    {
+      id: "starter_emergency",
+      title: "Build a $1,000 starter emergency fund",
+      why: "Before tackling debt or investing, you need a small buffer for true emergencies. A blown tire shouldn't become new credit card debt.",
+      done: state.accounts.savings >= 1000,
+      action: emergencyProgress < 1000
+        ? `You have ${fmt(emergencyProgress)} in your emergency fund. Aim for $1,000 minimum first.`
+        : "Done. Onto bigger goals.",
+      meta: state.accounts.savings < 1000 ? `${fmt(1000 - state.accounts.savings)} to go` : null,
+      progress: Math.min(100, (state.accounts.savings / 1000) * 100),
+      strict: false,
+    },
+    {
+      id: "match",
+      title: "Capture your full 401(k) match",
+      why: `Your employer matches ${state.employerMatch}% of contributions up to ${state.matchCap}% of pay. This is free money — instant 50%+ return. Skipping it is leaving compensation on the table.`,
+      done: isCapturingFullMatch && has401kContribution,
+      action: !isCapturingFullMatch
+        ? `Currently contributing ${state.contributions.contrib401k}% — bump to at least ${state.matchCap}% to capture the full match.`
+        : `Locked in. Your employer adds ${fmt(calc.match)} per paycheck → ${fmt(calc.match * 26)}/year.`,
+      progress: Math.min(100, (state.contributions.contrib401k / state.matchCap) * 100),
+      strict: false,
+    },
+    {
+      id: "high_interest_debt",
+      title: "Eliminate high-interest debt (>7% APR)",
+      why: "Credit cards averaging 20-25% APR will outrun any investment. Mathematically you cannot win against compounding interest at those rates. Pay them off aggressively.",
+      done: totalHighInterest === 0,
+      action: totalHighInterest > 0
+        ? `You have ${fmt(totalHighInterest)} in high-interest debt. The avalanche method (highest APR first) saves the most money.`
+        : "No high-interest debt. Strong position.",
+      meta: totalHighInterest > 0 ? `${highInterestDebt.length} debt${highInterestDebt.length > 1 ? "s" : ""} above 7%` : null,
+      warn: totalHighInterest > 0 && (state.contributions.rothIra > 0 || state.contributions.contrib401k > state.matchCap)
+        ? "You're contributing to retirement beyond the match while carrying high-interest debt. Mathematically suboptimal — but your call."
+        : null,
+      strict: false,
+    },
+    {
+      id: "full_emergency",
+      title: "Build a 3-month emergency fund",
+      why: `Based on your fixed expenses of ${fmt(monthlyExpenses)}/mo, target ${fmt(targetEmergency)}. This covers job loss, medical issues, or major repairs without touching investments.`,
+      done: state.accounts.savings >= targetEmergency,
+      action: state.accounts.savings < targetEmergency
+        ? `${fmt(targetEmergency - state.accounts.savings)} to go. At your current pace (${fmt(calc.emergency)}/paycheck), about ${Math.ceil((targetEmergency - state.accounts.savings) / Math.max(calc.emergency, 1))} paychecks away.`
+        : "Fully funded. You can sleep at night.",
+      progress: Math.min(100, (state.accounts.savings / targetEmergency) * 100),
+      strict: false,
+    },
+    {
+      id: "max_roth",
+      title: "Max out your Roth IRA",
+      why: `${fmt(state.caps.rothIra)} per year, post-tax going in, fully tax-free in retirement. The single best investment vehicle most people have access to. You can withdraw contributions (not gains) anytime without penalty.`,
+      done: isMaxingRoth,
+      action: !isMaxingRoth
+        ? `${fmt(state.caps.rothIra - state.ytd.rothIra)} more this year to max out. That's ${fmt((state.caps.rothIra - state.ytd.rothIra) / Math.max(26 - Math.floor((new Date().getMonth()) * 2.17), 1))} per remaining paycheck.`
+        : "Maxed for the year. Top-tier work.",
+      progress: Math.min(100, (state.ytd.rothIra / state.caps.rothIra) * 100),
+      strict: false,
+    },
+    {
+      id: "max_401k",
+      title: "Max out your 401(k)",
+      why: `${fmt(state.caps.contrib401k)}/year limit. Pre-tax = lower current taxable income. At ${state.taxRate}% tax rate, every dollar contributed saves ${(state.taxRate / 100).toFixed(2)} cents in taxes today.`,
+      done: isMaxing401k,
+      action: !isMaxing401k
+        ? `${fmt(state.caps.contrib401k - state.ytd.contrib401k)} more this year. Currently on track for roughly ${fmt(state.ytd.contrib401k + (calc.c401kEmployee * 26))} annually.`
+        : "Maxed. Excellent.",
+      progress: Math.min(100, (state.ytd.contrib401k / state.caps.contrib401k) * 100),
+      strict: false,
+    },
+    {
+      id: "remaining_debt",
+      title: "Pay off remaining debts",
+      why: "After retirement is funded, eliminate any low-interest debt you still carry — student loans, car loans, mortgages depending on rate. Lower-priority but psychologically freeing.",
+      done: allDebt === 0,
+      action: allDebt > 0
+        ? `${fmt(allDebt)} remaining across ${state.debts.length} debt${state.debts.length > 1 ? "s" : ""}.`
+        : "Debt-free. Real freedom.",
+      strict: false,
+    },
+    {
+      id: "taxable_brokerage",
+      title: "Invest in a taxable brokerage",
+      why: "After all tax-advantaged accounts are maxed, a brokerage account gives flexibility — no withdrawal age, no contribution limits. Index funds work well here. Consider tax-loss harvesting.",
+      done: false,
+      action: state.customAllocations.some(c => c.name.toLowerCase().includes("brokerage") || c.name.toLowerCase().includes("taxable"))
+        ? "You've added a brokerage account. Keep contributing."
+        : "Add a brokerage account from the Paycheck tab when you're ready.",
+      strict: false,
+    },
+  ];
+
+  const togglePhase = (id) => {
+    const completed = state.completedPhases || [];
+    if (completed.includes(id)) {
+      update({ completedPhases: completed.filter(p => p !== id) });
+    } else {
+      update({ completedPhases: [...completed, id] });
+    }
+  };
+
+  const completedCount = phases.filter(p => state.completedPhases?.includes(p.id) || p.done).length;
+
+  return (
+    <div className="animate-fade-in">
+      <Card>
+        <SectionLabel icon={IconCompass}>Your Roadmap</SectionLabel>
+        <p className="text-sm" style={{ color: "#a8a29e" }}>
+          A blended phased approach: do these in order for maximum financial efficiency. Tap any phase to mark it complete.
+        </p>
+        <div className="mt-4 flex items-center gap-3">
+          <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "#1f1f1f" }}>
+            <div className="h-full rounded-full transition-all" style={{
+              width: `${(completedCount / phases.length) * 100}%`,
+              background: "linear-gradient(90deg, #84cc16, #d4a574)"
+            }} />
+          </div>
+          <span className="font-mono-num text-xs" style={{ color: "#a8a29e" }}>{completedCount}/{phases.length}</span>
+        </div>
+      </Card>
+
+      {phases.map((phase, i) => {
+        const isComplete = state.completedPhases?.includes(phase.id) || phase.done;
+        return (
+          <PhaseCard key={phase.id} phase={phase} index={i + 1} isComplete={isComplete} onToggle={() => togglePhase(phase.id)} />
+        );
+      })}
+
+      <Card>
+        <SectionLabel icon={IconSparkles}>Beyond the basics</SectionLabel>
+        <div className="space-y-3 text-sm" style={{ color: "#a8a29e" }}>
+          <p>
+            <strong style={{ color: "#f5f5f4" }}>Increase income.</strong> No amount of budgeting beats earning more. Career growth, side income, and skill investment compound faster than any expense cut.
+          </p>
+          <p>
+            <strong style={{ color: "#f5f5f4" }}>Track net worth quarterly.</strong> Once a quarter, update all your account balances here. Watching the trend matters more than any single data point.
+          </p>
+          <p>
+            <strong style={{ color: "#f5f5f4" }}>Stay invested.</strong> Time in the market beats timing the market. Don't pull money out during downturns — that's when you're buying at a discount.
+          </p>
+          <p>
+            <strong style={{ color: "#f5f5f4" }}>Review your tax withholding annually.</strong> Big refunds = interest-free loan to the government. Aim to break even at tax time.
+          </p>
+        </div>
+      </Card>
+
+      <p className="text-[10px] text-center mt-2" style={{ color: "#57534e" }}>
+        General guidance, not personalized financial advice. Consult a fiduciary for your specific situation.
+      </p>
+    </div>
+  );
+}
+
+function PhaseCard({ phase, index, isComplete, onToggle }) {
+  return (
+    <Card className={isComplete ? "opacity-60" : ""}>
+      <div className="flex items-start gap-3">
+        <button onClick={onToggle}
+          className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 mt-0.5"
+          style={{
+            background: isComplete ? "#84cc16" : "#1f1f1f",
+            color: isComplete ? "#0a0a0a" : "#57534e",
+            border: isComplete ? "none" : "1px solid #2a2a2a",
+          }}>
+          {isComplete ? <IconCheck className="w-3.5 h-3.5" /> : <span className="text-xs font-mono-num">{index}</span>}
+        </button>
+
+        <div className="flex-1 min-w-0">
+          <h3 className="font-display text-lg leading-tight mb-1"
+            style={{ color: "#f5f5f4", textDecoration: isComplete ? "line-through" : "none" }}>
+            {phase.title}
+          </h3>
+          {phase.meta && (
+            <p className="text-[10px] uppercase tracking-wider mb-2 font-mono-num" style={{ color: "#d4a574" }}>
+              {phase.meta}
+            </p>
+          )}
+          <p className="text-sm mb-3" style={{ color: "#a8a29e" }}>
+            {phase.why}
+          </p>
+          <p className="text-sm pl-3 border-l-2" style={{ color: "#f5f5f4", borderColor: "#2a2a2a" }}>
+            {phase.action}
+          </p>
+
+          {phase.warn && !isComplete && (
+            <div className="mt-3 p-3 rounded-xl flex items-start gap-2"
+              style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)" }}>
+              <IconWarning className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#fbbf24" }} />
+              <p className="text-xs" style={{ color: "#fbbf24" }}>{phase.warn}</p>
+            </div>
+          )}
+
+          {typeof phase.progress === "number" && !isComplete && (
+            <div className="mt-3">
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#1f1f1f" }}>
+                <div className="h-full rounded-full transition-all"
+                  style={{ width: `${phase.progress}%`, background: phase.progress >= 100 ? "#84cc16" : "#d4a574" }} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ============ SETTINGS TAB ============
+function SettingsTab({ state, update, updateNested, downloadBackup, setShowImportExport }) {
+  return (
+    <div className="animate-fade-in">
+      <Card>
+        <SectionLabel icon={IconDownload}>Backup & Restore</SectionLabel>
+        <p className="text-xs mb-4" style={{ color: "#a8a29e" }}>
+          Browser data can get cleared. Export regularly to keep your data safe.
+        </p>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <button onClick={downloadBackup}
+            className="py-3 rounded-xl text-xs font-medium uppercase tracking-wider active:scale-95 flex items-center justify-center gap-2"
+            style={{ background: "#d4a574", color: "#0a0a0a" }}>
+            <IconDownload className="w-3.5 h-3.5" /> Quick Export
+          </button>
+          <button onClick={() => setShowImportExport(true)}
+            className="py-3 rounded-xl text-xs font-medium uppercase tracking-wider active:scale-95 flex items-center justify-center gap-2"
+            style={{ background: "#1f1f1f", color: "#f5f5f4" }}>
+            <IconUpload className="w-3.5 h-3.5" /> Import / Other
+          </button>
+        </div>
+        {state.lastExportAt && (
+          <p className="text-[10px] mt-2" style={{ color: "#57534e" }}>
+            Last exported: {new Date(state.lastExportAt).toLocaleString()}
+          </p>
+        )}
+      </Card>
+
+      <Card>
+        <SectionLabel>Tax & Match</SectionLabel>
+        <div className="space-y-4">
+          <SettingRow label="Tax Rate" suffix="%" value={state.taxRate}
+            onChange={(v) => update({ taxRate: v })} />
+          <SettingRow label="Employer Match" suffix="%" value={state.employerMatch}
+            onChange={(v) => update({ employerMatch: v })}
+            hint="What percentage of your contribution your employer matches" />
+          <SettingRow label="Match Cap" suffix="% of pay" value={state.matchCap}
+            onChange={(v) => update({ matchCap: v })}
+            hint="Maximum portion of paycheck eligible for match" />
+        </div>
+      </Card>
+
+      <Card>
+        <SectionLabel>Annual Limits</SectionLabel>
+        <div className="space-y-4">
+          <SettingRow label="401(k) Max" prefix="$" value={state.caps.contrib401k}
+            onChange={(v) => updateNested("caps", { contrib401k: v })} />
+          <SettingRow label="Roth IRA Max" prefix="$" value={state.caps.rothIra}
+            onChange={(v) => updateNested("caps", { rothIra: v })} />
+        </div>
+      </Card>
+
+      <Card>
+        <SectionLabel>About</SectionLabel>
+        <p className="text-xs" style={{ color: "#a8a29e" }}>
+          Single-file HTML app. Data lives in your browser's localStorage. Add this page to your home screen for an app-like experience.
+        </p>
+        <p className="text-[10px] mt-3" style={{ color: "#57534e" }}>
+          v2.0 · Biweekly mode · {state.unexportedChanges || 0} unexported changes
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+function SettingRow({ label, value, onChange, prefix, suffix, hint }) {
+  return (
+    <div>
+      <label className="text-xs block mb-1.5" style={{ color: "#a8a29e" }}>{label}</label>
+      <div className="flex items-center gap-2 px-4 py-3 rounded-xl"
+        style={{ background: "#1f1f1f" }}>
+        {prefix && <span className="text-sm" style={{ color: "#57534e" }}>{prefix}</span>}
+        <NumInput value={value} onChange={onChange}
+          className="flex-1 bg-transparent outline-none font-mono-num text-base"
+          style={{ color: "#f5f5f4" }} />
+        {suffix && <span className="text-xs" style={{ color: "#57534e" }}>{suffix}</span>}
+      </div>
+      {hint && <p className="text-[10px] mt-1.5" style={{ color: "#57534e" }}>{hint}</p>}
+    </div>
+  );
+}
+
+function Row({ label, value, bold, dim, danger }) {
+  return (
+    <div className="flex justify-between items-baseline">
+      <span style={{ color: bold ? "#f5f5f4" : dim ? "#57534e" : "#a8a29e" }}
+        className={bold ? "font-medium" : ""}>{label}</span>
+      <span className={`font-mono-num ${bold ? "font-display text-lg" : "text-sm"}`}
+        style={{
+          color: danger ? "#fb7185" : bold ? "#f5f5f4" : dim ? "#57534e" : "#a8a29e",
+          fontFamily: bold ? "Fraunces, serif" : "JetBrains Mono, monospace",
+        }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function BonusStat({ label, value, note }) {
+  return (
+    <div className="rounded-xl p-3" style={{ background: "#1f1f1f" }}>
+      <p className="text-[9px] uppercase tracking-wider mb-1" style={{ color: "#57534e" }}>{label}</p>
+      <p className="font-display text-lg" style={{ color: "#f5f5f4" }}>{value}</p>
+      {note && <p className="text-[9px] mt-0.5" style={{ color: "#57534e" }}>{note}</p>}
+    </div>
+  );
+}
+
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+} catch (err) {
+  document.getElementById("root").innerHTML =
+    '<div style="padding:24px;font-family:ui-monospace,monospace;color:#fb7185;font-size:12px;white-space:pre-wrap;">App crashed on render:\n\n' +
+    (err && err.message ? err.message : String(err)) + '</div>';
+}
+</script>
+</body>
+</html>
