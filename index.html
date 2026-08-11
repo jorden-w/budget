@@ -7050,17 +7050,19 @@ function SpendTab({ state, d, update, setBucket, addBucket, removeBucket, setAct
                         <span className="font-mono-num text-[13px] shrink-0">{fmt(r.outstanding)}</span>
                       </div>
                       <div className="flex gap-2 mt-2">
+                        {/* "They" is wrong for an expense claim — an employer
+                            reimburses, a friend pays you back. */}
                         <button onClick={() => setSettling(r)}
                           className="text-[10px] px-2.5 py-1.5 rounded-full pressable"
                           style={{ background: "var(--card-2)", color: "var(--accent-text)",
                                    border: "1px solid var(--border)" }}>
-                          They paid me back
+                          {r.owedType === "work" ? "Work reimbursed it" : "They paid me back"}
                         </button>
                         <button onClick={() => setSettling({ ...r, mode: "writeoff" })}
                           className="text-[10px] px-2.5 py-1.5 rounded-full pressable"
                           style={{ background: "transparent", color: "var(--muted)",
                                    border: "1px solid var(--border)" }}>
-                          They're not paying
+                          {r.owedType === "work" ? "Never reimbursed" : "They're not paying"}
                         </button>
                       </div>
                     </div>
@@ -7359,17 +7361,24 @@ function SplitSheet({ txn, buckets, onClose, onSplit }) {
   const [mode, setMode] = useState("people");
   const [ways, setWays] = useState(2);
   const [parts, setParts] = useState([]);
+  const [mine, setMine] = useState(0);
+
+  // Every hook stays above the early return — `mine` was declared after it,
+  // which changes the hook count between renders and takes the app down.
+  const total = num(txn?.amount);
+  const each = Math.round(total / ways * 100) / 100;
+  const othersShare = Math.round((total - each) * 100) / 100;
+
   useEffect(() => {
     if (!txn) return;
     setMode("people"); setWays(2);
     setParts([{ amount: Math.round(num(txn.amount) / 2 * 100) / 100, bucketId: txn.bucketId },
               { amount: num(txn.amount) - Math.round(num(txn.amount) / 2 * 100) / 100, bucketId: txn.bucketId }]);
   }, [txn]);
-  if (!txn) return null;
+  // An even split is the starting guess; the field below can override it.
+  useEffect(() => { setMine(each); }, [each]);
 
-  const total = num(txn.amount);
-  const each = Math.round(total / ways * 100) / 100;
-  const othersShare = Math.round((total - each) * 100) / 100;
+  if (!txn) return null;
   const partsTotal = parts.reduce((s, p) => s + num(p.amount), 0);
   const off = Math.round((partsTotal - total) * 100) / 100;
 
@@ -7389,7 +7398,7 @@ function SplitSheet({ txn, buckets, onClose, onSplit }) {
             <Field label="How many people, including you?"
               hint="Your share is what counts as spending. The rest becomes money owed to you, so it's still tracked until the Venmo lands.">
               <div className="flex gap-2 flex-wrap">
-                {[2, 3, 4, 5, 6, 8].map((n) => (
+                {[2, 3, 4, 5, 6, 7, 8].map((n) => (
                   <Pill key={n} active={ways === n} onClick={() => setWays(n)}>{n}</Pill>
                 ))}
               </div>
@@ -7397,9 +7406,26 @@ function SplitSheet({ txn, buckets, onClose, onSplit }) {
             <div className="p-4 rounded-2xl" style={{ background: "var(--card-2)" }}>
               <Row label="Full charge" value={fmt(total)} />
               <Row indent label={`Owed back by ${ways - 1} other${ways - 1 === 1 ? "" : "s"}`}
-                value={`−${fmt(othersShare)}`} color="var(--muted)" />
+                value={`−${fmt(Math.round((total - mine) * 100) / 100)}`} color="var(--muted)" />
               <Divider my={1} />
-              <Row label="Your share" bold value={fmt(each)} color="var(--good)" />
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <span className="text-[13px] font-semibold">Your share</span>
+                {/* Editable, because an even split is a starting guess rather
+                    than the truth — you cover someone's ticket but not their
+                    drinks far more often than everyone pays exactly 1/n. */}
+                <div className="flex items-center rounded-xl px-2.5 shrink-0"
+                     style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
+                  <span className="text-[12px]" style={{ color: "var(--faint)" }}>$</span>
+                  <NumInput value={mine} onChange={setMine}
+                    className="w-20 bg-transparent outline-none py-2 font-mono-num text-[14px] text-right"
+                    style={{ color: "var(--text)" }} />
+                </div>
+              </div>
+              {mine > total + 0.01 && (
+                <div className="text-[11px] mt-2" style={{ color: "var(--bad)" }}>
+                  More than the {fmt(total)} charge.
+                </div>
+              )}
             </div>
             <Field label="Your share goes to">
               <Select value={String(txn.bucketId ?? "")} className="w-full"
@@ -7409,13 +7435,16 @@ function SplitSheet({ txn, buckets, onClose, onSplit }) {
             </Field>
             <Button className="w-full" onClick={() => {
               const target = parts[0]?.bucketId ?? txn.bucketId;
+              const yours = Math.round(num(mine) * 100) / 100;
               onSplit([
-                { amount: each, bucketId: target, note: `your share, 1 of ${ways}` },
-                { amount: othersShare, excluded: true, owed: true,
+                { amount: yours, bucketId: target, note: `your share, 1 of ${ways}` },
+                { amount: Math.round((total - yours) * 100) / 100, excluded: true, owed: true,
                   excludeReason: `covering ${ways - 1} other${ways - 1 === 1 ? "" : "s"}`,
                   note: `${ways - 1} of ${ways}` },
               ]);
-            }}>Keep {fmt(each)} as mine</Button>
+            }} disabled={num(mine) <= 0 || num(mine) > total + 0.01}>
+              Keep {fmt(mine)} as mine
+            </Button>
           </>
         ) : (
           <>
@@ -7474,6 +7503,7 @@ function SplitSheet({ txn, buckets, onClose, onSplit }) {
  */
 function SettleSheet({ receivable: r, buckets, onClose, onSettle, onWriteOff }) {
   const writeoff = r?.mode === "writeoff";
+  const isWork = r?.owedType === "work";
   const [amount, setAmount] = useState(0);
   const [date, setDate] = useState(todayISO());
   const [bucketId, setBucketId] = useState(null);
@@ -7488,15 +7518,19 @@ function SettleSheet({ receivable: r, buckets, onClose, onSettle, onWriteOff }) 
   if (!r) return null;
 
   const partial = num(amount) > 0 && num(amount) < r.outstanding - 0.01;
+  const tooMuch = num(amount) > r.outstanding + 0.01;
 
   return (
-    <Modal open onClose={onClose} title={writeoff ? "Count it as yours" : "Mark it paid back"}
+    <Modal open onClose={onClose}
+      title={writeoff ? "Count it as yours" : isWork ? "Mark it reimbursed" : "Mark it paid back"}
       subtitle={`${r.merchant || r.description} · ${fmt(r.outstanding)} outstanding`}>
       {writeoff ? (
         <div className="space-y-5">
           <div className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
-            If they're never paying, the money was yours after all. It moves into your spending
-            for {monthLabel(r.monthKey)} — the month it was charged, not this one — so that month's
+            {isWork
+              ? "If the claim never comes through, you paid for it. It moves into your spending for "
+              : "If they're never paying, the money was yours after all. It moves into your spending for "}
+            {monthLabel(r.monthKey)} — the month it was charged, not this one — so that month's
             total tells the truth.
           </div>
           <Field label="Which category">
@@ -7512,8 +7546,9 @@ function SettleSheet({ receivable: r, buckets, onClose, onSettle, onWriteOff }) 
       ) : (
         <div className="space-y-5">
           <div className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
-            This cancels the debt rather than counting as income — it was always your money
-            coming back.
+            {isWork
+              ? "A reimbursement isn't income — it's your own money returning, so it cancels the claim rather than counting as earnings."
+              : "This cancels the debt rather than counting as income — it was always your money coming back."}
           </div>
           <Field label="How much came back">
             <div className="flex items-center rounded-xl px-3"
@@ -7534,9 +7569,15 @@ function SettleSheet({ receivable: r, buckets, onClose, onSettle, onWriteOff }) 
               {fmt(r.outstanding - num(amount))} stays outstanding.
             </div>
           )}
-          <Button className="w-full" disabled={num(amount) <= 0}
+          {tooMuch && (
+            <div className="text-[11px]" style={{ color: "var(--bad)" }}>
+              That's more than the {fmt(r.outstanding)} outstanding. Recording it would log money
+              that was never owed — if they overpaid, the extra is a separate thing.
+            </div>
+          )}
+          <Button className="w-full" disabled={num(amount) <= 0 || tooMuch}
             onClick={() => onSettle(num(amount), date)}>
-            {partial ? `Record ${fmt(amount)}` : "Settle it up"}
+            {partial ? `Record ${fmt(amount)}` : isWork ? "Mark it reimbursed" : "Settle it up"}
           </Button>
         </div>
       )}
