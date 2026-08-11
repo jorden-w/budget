@@ -2799,7 +2799,11 @@ const derive = (s) => {
     live.reduce((sum, b) => sum + num(b.balance), 0) +
     (s.bankroll.enabled ? bank.balance : 0) +
     (s.car.owned ? num(s.car.resaleValue) : num(s.car.saved)) -
-    debtTotal;
+    debtTotal -
+    // Card statements are money owed. Leaving them out overstated net worth
+    // by the whole balance — the purchases had already happened, the cash to
+    // cover them was still counted in checking, and nothing subtracted them.
+    (s.cardsEnabled ? card.totalBalance : 0);
 
   // W-2 take-home alone must cover essentials. Betting and side income are
   // too variable to underwrite rent.
@@ -3412,6 +3416,19 @@ const runTests = () => {
     const used = migrate({ schemaVersion: 9, accounts: { checking: 0, savings: 0 },
                            history: [{ id: 1, type: "paycheck" }], netWorthHistory: [] });
     return ok(isSet(used.accounts.checking), "kept, because they've been using it");
+  });
+
+  t("net worth: card balances are a liability, not invisible", () => {
+    // They were left out entirely, so net worth read high by whatever was on
+    // the cards — the purchases had happened and the cash to cover them was
+    // still being counted in checking.
+    const s = defaultState();
+    s.accounts.checking = 2400;
+    s.cardsEnabled = false;
+    const clean = derive(s).netWorth;
+    const withCard = derive({ ...s, cardsEnabled: true,
+      cards: [mkCard({ id: 1, statementBalance: 782 })] }).netWorth;
+    return eq(clean - withCard, 782, 0.01, "the balance comes off the total");
   });
 
   t("unknown balance: isSet distinguishes blank from zero", () => {
@@ -4964,7 +4981,7 @@ function NetWorthChart({ series, height = 170 }) {
     return (
       <div className="text-xs py-8 text-center" style={{ color: "var(--faint)" }}>
         Two months of history and this becomes a chart.<br />
-        <span style={{ color: "var(--muted)" }}>Snapshots are taken automatically at month end.</span>
+        <span style={{ color: "var(--muted)" }}>A snapshot is saved each time you add a paycheck.</span>
       </div>
     );
   }
@@ -8209,7 +8226,12 @@ function GoalsSection({ state, d, update, setIn, setBucket, addBucket, removeBuc
   const efMonthly = emergencyB ? num(emergencyB.amountMonthly) : 0;
   const efGap = Math.max(0, d.emergencyTarget - d.emergencyBalance);
   const efMonths = efMonthly > 0 ? Math.ceil(efGap / efMonthly) : null;
-  const goalsList = state.buckets.filter((b) => !b.archived && b.kind === "goal" && !/emergency/i.test(b.name));
+  // The bankroll reserve is a goal-kind bucket, but it belongs to the bankroll
+  // and is already shown under Investing. Listing it here too made it look
+  // like a second, nameless savings goal.
+  const goalsList = state.buckets.filter((b) => !b.archived && b.kind === "goal"
+    && !/emergency/i.test(b.name)
+    && String(b.id) !== String(state.bankroll?.reserveBucketId));
 
   return (
     <div>
@@ -8405,7 +8427,7 @@ function CarSection({ state, d, update, setIn, setToast, carOpen, setCarOpen }) 
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-[11px]" style={{ color: "var(--faint)" }}>Per mile driven</span>
             <span className="font-mono-num text-[14px]" style={{ color: "var(--accent-text)" }}>
-              {car.costPerMile.toFixed(2)}
+              ${car.costPerMile.toFixed(2)}
             </span>
           </div>
         </div>
@@ -8484,9 +8506,25 @@ function InvestSection({ state, d, update, setIn, setBucket, addBucket, removeBu
       <Card className="mb-1">
         <ContributionTracker label="401(k) — Traditional + Roth" ytd={total401kYtd} cap={state.limits.employee401k}
           color="var(--s1)"
-          pace={`On pace for ${fmt0(toAnnual(d.pay.total401k, d.cadence))}/yr. Both flavours share this one limit.`} />
+          pace={(() => {
+            // Was "on pace for X/yr" from the monthly rate alone, which ignored
+            // everything already contributed — the same mistake the alerts had.
+            const p = contributionPace(total401kYtd, toMonthly(d.pay.total401k, d.cadence), state.limits.employee401k);
+            if (p.maxed) return "Maxed for the year. Traditional and Roth share this one limit.";
+            return p.onTrack
+              ? `On track to max it by December. Traditional and Roth share this one limit.`
+              : `Lands around ${fmt0(p.projected)} at this rate; ${fmt0(p.needMonthly)}/mo would max it.`;
+          })()} />
         <ContributionTracker label="Roth IRA" ytd={d.rothIraYtd} cap={state.limits.rothIra} color="var(--s7)"
-          pace={rothIraB ? `${fmt0(rothIraB.amountMonthly)}/mo annualises to ${fmt0(num(rothIraB.amountMonthly) * 12)}. ${fmt0(num(state.limits.rothIra) / 12)}/mo maxes it.` : null} />
+          pace={(() => {
+            if (!rothIraB) return null;
+            const p = contributionPace(d.rothIraYtd, rothIraB.amountMonthly, state.limits.rothIra);
+            if (p.maxed) return "Maxed for the year — the room is used.";
+            if (num(rothIraB.amountMonthly) <= 0) return `${fmt0(p.needMonthly)}/mo from here would max it.`;
+            return p.onTrack
+              ? `${fmt0(rothIraB.amountMonthly)}/mo gets you to the cap by December.`
+              : `${fmt0(rothIraB.amountMonthly)}/mo lands at ${fmt0(p.projected)}; ${fmt0(p.needMonthly)}/mo would max it.`;
+          })()} />
         {state.modules.hsa && (
           <ContributionTracker label="HSA" ytd={state.ytd.hsa} cap={state.limits.hsaSelf} color="var(--s3)" />
         )}
@@ -8811,6 +8849,16 @@ function NetWorthSection({ state, d, setIn }) {
           <div className="flex items-center justify-between py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
             <span className="text-[13px]" style={{ color: "var(--muted)" }}>Debt</span>
             <span className="font-mono-num text-[14px]" style={{ color: "var(--bad)" }}>−{fmt(d.debtTotal)}</span>
+          </div>
+        )}
+        {/* Shown as a line so the column adds up. Without it the total looked
+            like arithmetic that didn't work. */}
+        {state.cardsEnabled && d.card.totalBalance > 0 && (
+          <div className="flex items-center justify-between py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
+            <span className="text-[13px]" style={{ color: "var(--muted)" }}>
+              Card balances{d.card.list.length > 1 ? ` (${d.card.list.length})` : ""}
+            </span>
+            <span className="font-mono-num text-[14px]" style={{ color: "var(--bad)" }}>−{fmt(d.card.totalBalance)}</span>
           </div>
         )}
         <div className="flex items-baseline justify-between pt-4 mt-1">
@@ -9230,6 +9278,18 @@ function SetupSheet({ open, onClose, openPlan, state, d, setIn, update, exportDa
             </div>
             <IconChevron className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--faint)" }} />
           </button>
+
+          {/* Today's "add your balance" prompt points here, so the field has
+              to be here. It used to only exist under Grow > Net worth, which
+              made that prompt a dead end. */}
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <LabeledInput label="Checking" prefix="$" value={state.accounts.checking}
+              onChange={(v) => setIn("accounts.checking", v)}
+              hint={isSet(state.accounts.checking) ? null : "not set yet"} />
+            <LabeledInput label="Savings" prefix="$" value={state.accounts.savings}
+              onChange={(v) => setIn("accounts.savings", v)}
+              hint={isSet(state.accounts.savings) ? null : "not set yet"} />
+          </div>
 
           <Field label="Appearance" hint="Dark by default. Pick System to follow your phone instead.">
             <div className="flex gap-2">
