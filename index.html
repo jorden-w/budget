@@ -7084,7 +7084,7 @@ function SpendTab({ state, d, update, setBucket, addBucket, removeBucket, setAct
 }
 
 function SpendRow({ row: r, avg, onActual, onEdit, onAdopt, last, month, buckets,
-                    onTxnChange, onTxnDelete, isCurrentMonth, trend }) {
+                    onTxnChange, onTxnDelete, onTxnSplit, isCurrentMonth, trend }) {
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(num(r.actual));
@@ -7206,9 +7206,13 @@ function SpendRow({ row: r, avg, onActual, onEdit, onAdopt, last, month, buckets
             </div>
           )}
           <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+            {/* Splitting used to be reachable only from the review list, so
+                once a line was confirmed it could never be divided — and you
+                usually only realise a charge was shared much later. */}
             {txns.sort((a, b) => (a.date < b.date ? -1 : 1)).map((t, i) => (
               <TxnRow key={t.id} txn={t} buckets={buckets} last={i === txns.length - 1}
-                onChange={(patch) => onTxnChange(t.id, patch)} onDelete={() => onTxnDelete(t.id)} />
+                onChange={(patch) => onTxnChange(t.id, patch)} onDelete={() => onTxnDelete(t.id)}
+                onSplit={() => onTxnSplit(t)} />
             ))}
           </div>
         </div>
