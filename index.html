@@ -9693,9 +9693,31 @@ function Wizard({ state, onDone, onSkip }) {
     },
     {
       title: "Retirement",
-      body: "Your match is 100% of the first 4% — contribute at least that or you're turning down a raise.",
+      body: "Employer match first — it's the only guaranteed return you'll be offered. Contribute at least enough to collect all of it.",
       content: (
         <div>
+          <div className="p-4 rounded-2xl mb-5" style={{ background: "var(--card-2)" }}>
+            <div className="text-[12px] font-medium mb-1">What your employer matches</div>
+            <div className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--muted)" }}>
+              The default is the most common arrangement. Your plan documents will say — it's
+              worth checking, because every match figure in the app comes from these two numbers.
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <LabeledInput label="They match" suffix="%" value={s.match.tiers[0]?.matchPct ?? 100}
+                onChange={(v) => setS((prev) => ({ ...prev, match: { ...prev.match,
+                  tiers: [{ ...(prev.match.tiers[0] || {}), matchPct: num(v),
+                            uptoPctOfPay: prev.match.tiers[0]?.uptoPctOfPay ?? 4 }] } }))} />
+              <LabeledInput label="Of your first" suffix="%" value={s.match.tiers[0]?.uptoPctOfPay ?? 4}
+                onChange={(v) => setS((prev) => ({ ...prev, match: { ...prev.match,
+                  tiers: [{ ...(prev.match.tiers[0] || {}), uptoPctOfPay: num(v),
+                            matchPct: prev.match.tiers[0]?.matchPct ?? 100 }] } }))} />
+            </div>
+            <div className="text-[11px] mt-2" style={{ color: "var(--faint)" }}>
+              {s.match.tiers[0]?.matchPct ?? 100}% of the first {s.match.tiers[0]?.uptoPctOfPay ?? 4}% you
+              contribute — so contributing {s.match.tiers[0]?.uptoPctOfPay ?? 4}% collects all of it.
+            </div>
+          </div>
+
           <DualSlider label="Total 401(k)" color="var(--s1)" base={s.income.w2.grossPerCheck} max={25}
             percent={num(s.preTax.trad401kPct) + num(s.postTax.roth401kPct)}
             onChange={(v) => {
