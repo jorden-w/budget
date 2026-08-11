@@ -1095,6 +1095,11 @@ const defaultState = () => ({
   // changes the shape of the forecast completely.
   forecast: { spendOn: "card", cardId: null, days: 60 },
 
+  // Alert ids you've waved away. Keyed by id, so an alert whose situation
+  // changes gets a new id and speaks up again rather than staying silenced
+  // forever. See `push` in recommendations for how ids are built.
+  dismissed: {},
+
   // Only accounts NOT represented as buckets live here. Roth IRA and brokerage
   // are buckets (the waterfall funds them), so their balance and YTD live on
   // the bucket — one source of truth, no double-counting in net worth.
@@ -2818,57 +2823,75 @@ const rentCheck = (rent, extras, d, s) => {
 /** Alerts surfaced on Home. Ordered most-urgent first. */
 const recommendations = (s, d) => {
   const out = [];
-  const push = (level, title, body) => out.push({ level, title, body });
+  /**
+   * `id` is what makes dismissal behave. It's a stable key for the *kind* of
+   * alert, plus a coarse bucket of the number that triggered it — so
+   * dismissing "you're $165 short" stays dismissed at $170, but a slide to
+   * $900 is a different situation and speaks up again.
+   */
+  const push = (level, title, body, id) =>
+    out.push({ level, title, body, id: id || title.toLowerCase().replace(/[^a-z]+/g, "-").slice(0, 40) });
+  /** Bucket a figure so small drifts don't resurrect a dismissed alert. */
+  const band = (v, step = 250) => Math.round(num(v) / step);
 
   // Running out of money on a specific date outranks everything else here.
   if (d.forecast?.goesNegative) {
     const when = new Date(todayISO(d.forecast.firstNegative) + "T00:00:00")
       .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     push("bad", `Checking runs dry on ${when}`,
-      `Following your bills, card statements and usual spending, you go below zero${d.forecast.shortBy > 0 ? ` by about ${fmt(d.forecast.shortBy)}` : ""} before the next paycheck. Moving a due date or trimming a category now is easier than an overdraft then.`);
+      `Following your bills, card statements and usual spending, you go below zero${d.forecast.shortBy > 0 ? ` by about ${fmt(d.forecast.shortBy)}` : ""} before the next paycheck. Moving a due date or trimming a category now is easier than an overdraft then.`,
+      `dry-${todayISO(d.forecast.firstNegative)}-${band(d.forecast.shortBy)}`);
   }
 
   // Cash shortfalls come first — they're the ones with a deadline.
   if (d.card.enabled && d.card.totalBalance > 0 && !d.card.covered) {
     push("bad", "Checking won't cover your card statements",
-      `${fmt(d.card.totalBalance)} across ${d.card.list.length} card${d.card.list.length === 1 ? "" : "s"} against ${fmt(s.accounts.checking)} in checking — you're ${fmt(d.card.totalBalance - num(s.accounts.checking))} short. This is the month a paid-in-full card turns into debt.`);
+      `${fmt(d.card.totalBalance)} across ${d.card.list.length} card${d.card.list.length === 1 ? "" : "s"} against ${fmt(s.accounts.checking)} in checking — you're ${fmt(d.card.totalBalance - num(s.accounts.checking))} short. This is the month a paid-in-full card turns into debt.`,
+      `card-uncovered-${band(d.card.totalBalance - num(s.accounts.checking))}`);
   }
   // Unactivated rotating categories are free money being left on the table,
   // and the deadline is the end of the quarter.
   for (const t of d.rotatingTodo) {
     if (t.issue === "inactive") {
       push("warn", `Activate ${t.card.name}'s ${t.rate}% categories`,
-        `${t.cats.map(spendLabel).join(", ")} pay ${t.rate}% this quarter, but only once you activate — until then it earns ${num(t.card.rewards.base)}%. ${daysLeftInQuarter()} days left in ${quarterLabel(t.qk)}.`);
+        `${t.cats.map(spendLabel).join(", ")} pay ${t.rate}% this quarter, but only once you activate — until then it earns ${num(t.card.rewards.base)}%. ${daysLeftInQuarter()} days left in ${quarterLabel(t.qk)}.`,
+        `activate-${t.card.id}-${t.qk}`);
     } else {
       push("info", `${t.card.name} has no categories set for this quarter`,
-        `Add what ${quarterLabel(t.qk)} is paying ${num(t.card.rewards.rotating.rate)}% on so the card picker can use it.`);
+        `Add what ${quarterLabel(t.qk)} is paying ${num(t.card.rewards.rotating.rate)}% on so the card picker can use it.`,
+        `no-cats-${t.card.id}-${t.qk}`);
     }
   }
   // A subscription that went up rarely announces itself.
   for (const h of (d.hikes || []).slice(0, 3)) {
     push("info", `${h.merchant} costs more than it used to`,
-      `Now ${fmt(h.amount)} ${h.cadence}, was ${fmt(h.was)} — ${pct(h.delta * 100, 0)} more, or about ${fmt0((h.amount - h.was) * h.perYear)} a year. Worth deciding you still want it rather than finding out later.`);
+      `Now ${fmt(h.amount)} ${h.cadence}, was ${fmt(h.was)} — ${pct(h.delta * 100, 0)} more, or about ${fmt0((h.amount - h.was) * h.perYear)} a year. Worth deciding you still want it rather than finding out later.`,
+      `hike-${h.key}-${band(h.amount, 5)}`);
   }
 
   for (const c of (d.card.list || [])) {
     if (c.utilizationWarn) {
       push("info", `${c.name} is above 30% utilisation`,
-        `${fmt(c.balance)} against a ${fmt(c.card.creditLimit)} limit is ${pct(c.utilization * 100, 0)}. Even paying in full, the statement balance is what gets reported — paying down before the statement closes keeps it off your credit report.`);
+        `${fmt(c.balance)} against a ${fmt(c.card.creditLimit)} limit is ${pct(c.utilization * 100, 0)}. Even paying in full, the statement balance is what gets reported — paying down before the statement closes keeps it off your credit report.`,
+      `util-${c.card.id}-${band(c.utilization * 100, 10)}`);
     }
   }
   const dueUnfunded = d.billsDueSoon.reduce((sum, b) => sum + b.amount, 0);
   if (dueUnfunded > num(s.accounts.checking) - (d.card.enabled ? d.card.totalBalance : 0)) {
     push("warn", "Bills due this week exceed free cash",
-      `${fmt(dueUnfunded)} due within 7 days, and ${fmt(d.card.freeToSpend)} free after the card statement.`);
+      `${fmt(dueUnfunded)} due within 7 days, and ${fmt(d.card.freeToSpend)} free after the card statement.`,
+      `bills-tight-${band(dueUnfunded)}`);
   }
   if (!d.match.fullyCaptured && d.match.missing > 0) {
     push("bad", "You're leaving employer match on the table",
-      `Contributing ${d.deferralPct.toFixed(1)}% gets you ${fmt(d.match.match)}/check. Going to ${(d.deferralPct + d.match.needPct).toFixed(1)}% would get the full ${fmt(d.match.maxMatch)} — an extra ${fmt(toAnnual(d.match.missing, d.cadence))} a year, free.`);
+      `Contributing ${d.deferralPct.toFixed(1)}% gets you ${fmt(d.match.match)}/check. Going to ${(d.deferralPct + d.match.needPct).toFixed(1)}% would get the full ${fmt(d.match.maxMatch)} — an extra ${fmt(toAnnual(d.match.missing, d.cadence))} a year, free.`,
+      `match-${band(d.match.missing, 5)}`);
   }
   if (d.flow.leftover < 0 || d.flow.unfunded.length > 0) {
     const short = d.flow.unfunded.reduce((sum, u) => sum + u.short, 0);
     push("bad", "Your plan doesn't fit your income",
-      `${fmt(short)}/mo of what you've budgeted has nowhere to come from. ${d.flow.unfunded.slice(0, 3).map((u) => u.bucket.name).join(", ")}${d.flow.unfunded.length > 3 ? "…" : ""} come up short.`);
+      `${fmt(short)}/mo of what you've budgeted has nowhere to come from. ${d.flow.unfunded.slice(0, 3).map((u) => u.bucket.name).join(", ")}${d.flow.unfunded.length > 3 ? "…" : ""} come up short.`,
+      `plan-short-${band(short)}`);
   }
   if (d.flow.starvedByRemainder.length > 0) {
     push("warn", "Buckets below a “whatever's left” bucket get nothing",
@@ -2877,30 +2900,28 @@ const recommendations = (s, d) => {
   if (d.essentialsCoverage < 1 && d.essentialMonthly > 0) {
     push("bad", "Paycheck alone doesn't cover essentials",
       `Your W-2 take-home is ${fmt(d.w2NetMonthly)}/mo against ${fmt(d.essentialMonthly)} of essentials. Side and betting income are too variable to cover rent.`);
-  } else if (d.essentialsCoverage < 1.3 && d.essentialMonthly > 0) {
-    push("warn", "Essentials eat most of your paycheck",
-      `${pct(100 / d.essentialsCoverage, 0)} of take-home goes to essentials. Under 70% is a healthier place to be.`);
   }
+  // The essentials ratio is a structural fact about your cost of living, not
+  // a thing to do this week. It reads as nagging in an action list.
   if (d.emergencyBalance < num(s.emergency.starterTarget)) {
     push("warn", "No starter emergency fund yet",
       `${fmt(d.emergencyBalance)} saved against a ${fmt(s.emergency.starterTarget)} starter buffer. This is the single highest-value thing to fix first — it's what keeps a bad month off a credit card.`);
-  } else if (d.emergencyBalance < d.emergencyTarget) {
-    const monthsCovered = d.essentialMonthly > 0 ? d.emergencyBalance / d.essentialMonthly : 0;
-    push("info", "Emergency fund still filling",
-      `${fmt(d.emergencyBalance)} covers ${monthsCovered.toFixed(1)} months of essentials. Target is ${s.emergency.months} months (${fmt(d.emergencyTarget)}).`);
   }
+  // "Emergency fund still filling" used to live here. It's a status, not
+  // something to act on — a fund that's filling is a fund that's working.
+  // It shows as progress on Grow instead.
   const rothB = s.buckets.find((b) => !b.archived && /roth ira/i.test(b.name));
-  if (rothB) {
-    const onPace = num(rothB.amountMonthly) * 12;
-    if (onPace < s.limits.rothIra * 0.98 && onPace > 0) {
-      push("info", "Roth IRA won't max at this pace",
-        `${fmt(rothB.amountMonthly)}/mo annualizes to ${fmt(onPace)} against the ${fmt(s.limits.rothIra)} limit. ${fmt(s.limits.rothIra / 12)}/mo maxes it. The contribution room doesn't carry over — miss the year and it's gone.`);
+  if (rothB && num(rothB.amountMonthly) > 0) {
+    // Counts what's already in. Starting in August at a rate that clears the
+    // remaining room is on track, and saying otherwise is just wrong.
+    const pace = contributionPace(d.rothIraYtd, rothB.amountMonthly, s.limits.rothIra);
+    if (!pace.maxed && !pace.onTrack && pace.monthsLeft > 1) {
+      push("info", `Roth IRA lands about ${fmt0(pace.shortBy)} short of the cap`,
+        `${fmt(d.rothIraYtd)} in so far and ${fmt(rothB.amountMonthly)}/mo for the ${pace.monthsLeft.toFixed(1)} months left gets you to ${fmt0(pace.projected)} of ${fmt0(s.limits.rothIra)}. ${fmt0(pace.needMonthly)}/mo from here would finish it. The room doesn't carry over.`);
     }
   }
-  if (!s.car.owned && num(s.car.saved) < num(s.car.buyoutPrice)) {
-    push("warn", "Car buyout not fully funded",
-      `${fmt(s.car.saved)} saved against a ${fmt(s.car.buyoutPrice)} buyout — ${fmt(num(s.car.buyoutPrice) - num(s.car.saved))} to go.`);
-  }
+  // Car buyout progress is a goal on Grow, not an alert. It has no deadline
+  // this week and repeating it every load is noise.
   if (s.car.owned && d.car.sinkingTotalMonthly > 0) {
     const carBuckets = s.buckets.filter((b) => !b.archived && b.kind === "sinking" && /car/i.test(b.name));
     const budgeted = carBuckets.reduce((sum, b) => sum + num(b.amountMonthly), 0);
@@ -2937,6 +2958,32 @@ const recommendations = (s, d) => {
       `At about ${fmt0(annualIncome)} you're near the ${fmt0(phaseout[0])}–${fmt0(phaseout[1])} phase-out for direct Roth IRA contributions.`);
   }
   return out;
+};
+
+/**
+ * Whether a capped account will actually reach its limit this year.
+ *
+ * Annualising the monthly rate and comparing to the cap is the obvious test
+ * and it's wrong twice over: someone who started contributing in August looks
+ * hopelessly behind when their monthly rate is fine for the room that's left,
+ * and someone who front-loaded the whole limit in January looks behind while
+ * already being done.
+ *
+ * What matters is where you land: what's in, plus what's still coming.
+ */
+const contributionPace = (ytd, monthly, cap, d = new Date()) => {
+  const soFar = num(ytd);
+  const monthsLeft = Math.max(0, 12 - monthsElapsedThisYear(d));
+  const projected = soFar + num(monthly) * monthsLeft;
+  const room = Math.max(0, num(cap) - soFar);
+  // What you'd need per month from here to finish the year at the cap.
+  const needMonthly = monthsLeft > 0.05 ? room / monthsLeft : 0;
+  return {
+    ytd: soFar, monthsLeft, projected, room, needMonthly,
+    maxed: soFar >= num(cap) - 0.5,
+    onTrack: projected >= num(cap) * 0.98,
+    shortBy: Math.max(0, num(cap) - projected),
+  };
 };
 
 /** The roadmap. Order is deliberate — each step is worth more than the next. */
@@ -2993,7 +3040,15 @@ const buildRoadmap = (s, d) => {
       key: "max_roth_ira", icon: IconPiggy, title: `Max the Roth IRA (${fmt0(s.limits.rothIra)})`,
       done: d.rothIraYtd >= num(s.limits.rothIra) * 0.98,
       progress: clamp(d.rothIraYtd / Math.max(1, num(s.limits.rothIra)), 0, 1),
-      detail: `${fmt(d.rothIraYtd)} contributed this year. ${rothB ? `On pace for ${fmt(num(rothB.amountMonthly) * 12)}.` : ""}`,
+      detail: (() => {
+        const pace = contributionPace(d.rothIraYtd, rothB ? rothB.amountMonthly : 0, s.limits.rothIra);
+        if (pace.maxed) return `${fmt(d.rothIraYtd)} in — done for the year.`;
+        if (!rothB || num(rothB.amountMonthly) <= 0) return `${fmt(d.rothIraYtd)} in, nothing scheduled monthly.`;
+        // Projects from what's already in, so a mid-year start isn't "behind".
+        return pace.onTrack
+          ? `${fmt(d.rothIraYtd)} in, and ${fmt(rothB.amountMonthly)}/mo gets you to the cap by December.`
+          : `${fmt(d.rothIraYtd)} in. At ${fmt(rothB.amountMonthly)}/mo you'd finish at ${fmt0(pace.projected)}; ${fmt0(pace.needMonthly)}/mo would max it.`;
+      })(),
       why: "Use-it-or-lose-it room each year, and it grows tax-free forever.",
     },
     {
@@ -3274,6 +3329,40 @@ const runTests = () => {
     eq(b.profit, 1500, 0.01, "profit");
     eq(b.taxOwedEstimate, 375, 0.01, "tax at a 25% set-aside");
     return eq(b.reserveShortfall, 375, 0.01, "nothing reserved yet");
+  });
+
+  // ---------- v9: contribution pace ----------
+  t("pace: starting mid-year at a rate that clears the room is on track", () => {
+    // The complaint this fixes: $625/mo from August with $3,000 already in
+    // reads as "won't max at this pace" under the old annualise-the-rate test,
+    // because 625 x 12 = 7,500 only if you had the whole year.
+    const aug = new Date(2026, 7, 10);
+    const p = contributionPace(4600, 625, 7500, aug);
+    ok(p.monthsLeft > 4.5 && p.monthsLeft < 5, `about ${p.monthsLeft.toFixed(1)} months left`);
+    ok(p.onTrack, "lands at or above the cap");
+    return ok(p.projected >= 7500, `projects ${p.projected.toFixed(0)}`);
+  });
+
+  t("pace: a front-loaded year is never 'behind'", () => {
+    // Everything in during January, nothing monthly since. Annualising the
+    // monthly rate calls this 0 a year; it's actually finished.
+    const p = contributionPace(7500, 0, 7500, new Date(2026, 7, 10));
+    ok(p.maxed, "already maxed");
+    return ok(p.onTrack, "and not nagged about it");
+  });
+
+  t("pace: genuinely behind is still caught, with the rate needed to fix it", () => {
+    const p = contributionPace(1000, 100, 7500, new Date(2026, 7, 10));
+    ok(!p.onTrack, "flagged");
+    eq(p.shortBy, 7500 - (1000 + 100 * p.monthsLeft), 0.01, "by how much");
+    // The actionable number: what per month from here finishes the year.
+    return eq(p.needMonthly, 6500 / p.monthsLeft, 0.01, "and what would fix it");
+  });
+
+  t("pace: in December the needed rate doesn't divide by zero", () => {
+    const p = contributionPace(0, 100, 7500, new Date(2026, 11, 31));
+    ok(isFinite(p.needMonthly), "finite");
+    return ok(p.monthsLeft >= 0, "no negative time");
   });
 
   t("bankroll: a year-to-date figure converts on elapsed months, not whole ones", () => {
@@ -5270,7 +5359,7 @@ const Button = ({ children, onClick, variant = "primary", disabled, className = 
   );
 };
 
-const AlertCard = ({ level, title, body, action, onAction }) => {
+const AlertCard = ({ level, title, body, action, onAction, onDismiss }) => {
   const c = { bad: "var(--bad)", warn: "var(--warn)", info: "var(--accent-text)", good: "var(--good)" }[level] || "var(--accent-text)";
   const bg = { bad: "var(--bad-soft)", warn: "var(--warn-soft)", info: "var(--accent-soft)", good: "var(--good-soft)" }[level] || "var(--accent-soft)";
   const Ico = level === "bad" || level === "warn" ? IconWarning : level === "good" ? IconCheck : IconInfo;
@@ -5282,6 +5371,12 @@ const AlertCard = ({ level, title, body, action, onAction }) => {
         <div className="text-[12px] leading-relaxed" style={{ color: "var(--muted)" }}>{body}</div>
         {action && <button onClick={onAction} className="text-[12px] font-semibold mt-2 pressable" style={{ color: c }}>{action} →</button>}
       </div>
+      {onDismiss && (
+        <button onClick={onDismiss} aria-label={`Dismiss: ${title}`}
+          className="shrink-0 -mt-1 -mr-1 p-1.5 rounded-lg pressable" style={{ color: "var(--muted)" }}>
+          <IconX className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   );
 };
@@ -5398,9 +5493,16 @@ const SlotPicker = ({ slot, onChange }) => (
 
 
 // ===================== §8  APP =====================
+/**
+ * Four tabs, split by what you're doing rather than by subject.
+ *
+ * "Plan" used to sit here and was almost entirely configuration — gross pay,
+ * contribution percentages, the priority order. Things you set once and then
+ * never open again don't earn a permanent navigation slot; they live behind
+ * the gear with the rest of the settings.
+ */
 const TABS = [
   { key: "today", label: "Today", icon: IconHome },
-  { key: "plan",  label: "Plan",  icon: IconWallet },
   { key: "spend", label: "Spend", icon: IconCard },
   { key: "bills", label: "Bills", icon: IconCalendar },
   { key: "grow",  label: "Grow",  icon: IconTrending },
@@ -5410,6 +5512,7 @@ function App() {
   const [state, setState] = useState(loadState);
   const [tab, setTab] = useState("today");
   const [setupOpen, setSetupOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
@@ -5437,7 +5540,11 @@ function App() {
   }, [toast]);
 
   const d = useMemo(() => derive(state), [state]);
-  const recs = useMemo(() => recommendations(state, d), [state, d]);
+  const allRecs = useMemo(() => recommendations(state, d), [state, d]);
+  const recs = useMemo(
+    () => allRecs.filter((r) => !state.dismissed?.[r.id]),
+    [allRecs, state.dismissed]);
+  const dismissedCount = allRecs.length - recs.length;
   const roadmap = useMemo(() => buildRoadmap(state, d), [state, d]);
 
   const update = (fn) => setState((s) => {
@@ -5640,7 +5747,7 @@ function App() {
   };
 
   const ctx = {
-    state, d, recs, roadmap, update, updateQuiet, setIn,
+    state, d, recs, dismissedCount, roadmap, update, updateQuiet, setIn, setPlanOpen,
     setBucket, addBucket, removeBucket, moveBucket, setActual, moveMoney, undoMove,
     addPaycheck, undoEntry, exportData, importData, importStatements, setToast, setTab, setSetupOpen,
   };
@@ -5705,7 +5812,6 @@ function App() {
 
         <main className="animate-fade-in" key={tab}>
           {tab === "today" && <TodayTab {...ctx} />}
-          {tab === "plan"  && <PlanTab {...ctx} />}
           {tab === "spend" && <SpendTab {...ctx} />}
           {tab === "bills" && <BillsTab {...ctx} />}
           {tab === "grow"  && <GrowTab {...ctx} />}
@@ -5737,7 +5843,12 @@ function App() {
         </div>
       </nav>
 
-      <SetupSheet open={setupOpen} onClose={() => setSetupOpen(false)} {...ctx} />
+      <Modal open={planOpen} onClose={() => setPlanOpen(false)} title="Paycheck & plan"
+        subtitle="Income, contributions, and the order money fills up">
+        <PlanTab {...ctx} />
+      </Modal>
+
+      <SetupSheet open={setupOpen} onClose={() => setSetupOpen(false)} openPlan={() => { setSetupOpen(false); setPlanOpen(true); }} {...ctx} />
 
       {toast && (
         <div className="fixed left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-2xl text-[13px] font-medium animate-pop max-w-[90vw]"
@@ -5752,8 +5863,7 @@ function App() {
 
 
 // ===================== §9  TODAY =====================
-function TodayTab({ state, d, recs, roadmap, setTab, addPaycheck, undoEntry, update, setSetupOpen }) {
-  const [guideOpen, setGuideOpen] = useState(false);
+function TodayTab({ state, d, recs, dismissedCount, roadmap, setTab, addPaycheck, undoEntry, update, setSetupOpen }) {
   const mk = d.thisMonth;
   const month = state.months[mk] || { actual: {} };
   const trackable = state.buckets.filter((b) => !b.archived && (b.kind === "expense" || b.kind === "discretionary"));
@@ -5862,10 +5972,38 @@ function TodayTab({ state, d, recs, roadmap, setTab, addPaycheck, undoEntry, upd
 
       {recs.length > 0 && (
         <>
-          <SectionLabel>Needs attention</SectionLabel>
+          <SectionLabel right={dismissedCount > 0
+            ? <LinkButton onClick={() => update((s) => ({ ...s, dismissed: {} }))}>
+                Show {dismissedCount} dismissed
+              </LinkButton>
+            : null}>Needs attention</SectionLabel>
           <div className="space-y-2">
-            {recs.slice(0, 4).map((r, i) => <AlertCard key={i} {...r} />)}
+            {recs.slice(0, 4).map((r) => (
+              <AlertCard key={r.id} {...r}
+                onDismiss={() => update((s) => ({ ...s, dismissed: { ...s.dismissed, [r.id]: Date.now() } }))} />
+            ))}
           </div>
+        </>
+      )}
+
+      {/* Everything was waved away — say so rather than showing a blank gap,
+          and leave a way back. */}
+      {recs.length === 0 && dismissedCount > 0 && (
+        <>
+          <SectionLabel>Needs attention</SectionLabel>
+          <Card>
+            <div className="flex items-center gap-3">
+              <IconCheck className="w-4 h-4 shrink-0" style={{ color: "var(--good)" }} />
+              <div className="text-[12px] flex-1" style={{ color: "var(--muted)" }}>
+                Nothing outstanding. {dismissedCount} dismissed — they'll come back if the
+                situation changes.
+              </div>
+              <button onClick={() => update((s) => ({ ...s, dismissed: {} }))}
+                className="text-[11px] shrink-0 pressable" style={{ color: "var(--accent-text)" }}>
+                Show
+              </button>
+            </div>
+          </Card>
         </>
       )}
 
@@ -5942,16 +6080,16 @@ function TodayTab({ state, d, recs, roadmap, setTab, addPaycheck, undoEntry, upd
         </Button>
       </div>
 
-      {/* ---- roadmap ---- */}
-      <SectionLabel right={<LinkButton onClick={() => setGuideOpen(!guideOpen)}>
-        {guideOpen ? "Collapse" : "See all"}
-      </LinkButton>}>Your roadmap</SectionLabel>
-      <Card>
-        {(() => {
-          const doneCount = roadmap.filter((p) => p.done).length;
-          const current = roadmap.find((p) => !p.done);
-          return (
-            <>
+      {/* ---- where you are ---- */}
+      {(() => {
+        const doneCount = roadmap.filter((p) => p.done).length;
+        const current = roadmap.find((p) => !p.done);
+        return (
+          <>
+            <SectionLabel right={<LinkButton onClick={() => setTab("grow")}>Open</LinkButton>}>
+              Where you are
+            </SectionLabel>
+            <Card>
               <div className="flex items-baseline justify-between mb-2 gap-3">
                 <div className="text-[14px] font-semibold min-w-0 truncate">
                   {current ? current.title : "Every step complete"}
@@ -5963,43 +6101,13 @@ function TodayTab({ state, d, recs, roadmap, setTab, addPaycheck, undoEntry, upd
               <ProgressBar value={doneCount / roadmap.length} color="var(--accent)" />
               {current && (
                 <div className="text-[12px] mt-3 leading-relaxed" style={{ color: "var(--muted)" }}>
-                  {current.detail} <span style={{ color: "var(--faint)" }}>{current.why}</span>
+                  {current.detail}
                 </div>
               )}
-            </>
-          );
-        })()}
-
-        {guideOpen && (
-          <div className="mt-6 space-y-1">
-            {roadmap.map((p, i) => (
-              <div key={p.key} className="flex gap-3">
-                <div className="flex flex-col items-center shrink-0">
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-mono-num"
-                       style={{ background: p.done ? "var(--good)" : "var(--card-2)",
-                                color: p.done ? "#fff" : "var(--faint)",
-                                border: `1px solid ${p.done ? "var(--good)" : "var(--border)"}` }}>
-                    {p.done ? <IconCheck className="w-3.5 h-3.5" /> : i + 1}
-                  </div>
-                  {i < roadmap.length - 1 && <div className="w-px flex-1 my-1" style={{ background: "var(--border)" }} />}
-                </div>
-                <div className="pb-5 min-w-0 flex-1">
-                  <div className="text-[13px] font-medium">{p.title}</div>
-                  <div className="text-[12px] mt-0.5" style={{ color: "var(--muted)" }}>{p.detail}</div>
-                  <div className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--faint)" }}>{p.why}</div>
-                  {!p.done && p.progress > 0 && p.progress < 1 && (
-                    <div className="mt-2"><ProgressBar value={p.progress} color="var(--accent)" height={4} /></div>
-                  )}
-                  {p.warn && (
-                    <div className="text-[11px] mt-2 p-2.5 rounded-xl leading-relaxed"
-                         style={{ background: "var(--warn-soft)", color: "var(--warn)" }}>{p.warn}</div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+            </Card>
+          </>
+        );
+      })()}
 
       {state.history.length > 0 && (
         <>
@@ -6258,12 +6366,26 @@ function PlanTab({ state, d, setIn, update, setBucket, addBucket, removeBucket, 
 
       {/* ---- the waterfall ---- */}
       <SectionLabel right={<LinkButton onClick={() => setAddOpen(true)}>+ Add</LinkButton>}>
-        Priority order
+        Where each paycheck goes
       </SectionLabel>
       <Card className="mb-1">
-        <div className="text-[11px] leading-relaxed mb-4" style={{ color: "var(--faint)" }}>
-          Take-home flows down this list. Each bucket takes what it asks for, stops at its target
-          or annual cap, and passes the rest along. Reorder to change what gets funded first.
+        {/* "Priority order" meant nothing on its own — the name described the
+            control, not what it does. This says what happens, with the real
+            numbers from the next actual paycheck. */}
+        <div className="text-[12px] leading-relaxed mb-4" style={{ color: "var(--muted)" }}>
+          Your {fmt(p.netPay)} take-home pours down this list, top to bottom. Each one takes
+          what it asks for and passes the rest along — so whatever sits at the top gets paid
+          before anything below it, and a month that comes up short runs out at the bottom, not
+          the middle.
+          {d.flowPerCheck.allocations.length > 1 && (
+            <> Right now {d.flowPerCheck.allocations[0].bucket.name} is funded first
+            {d.flowPerCheck.leftover > 0
+              ? <>, and {fmt(d.flowPerCheck.leftover)} is left over</>
+              : d.flowPerCheck.unfunded.length > 0
+                ? <>, and it runs out before {d.flowPerCheck.unfunded[0].bucket.name}</>
+                : <> and everything below it gets funded</>}.</>
+          )}
+          {" "}Use the arrows to change the order.
         </div>
         {d.flowPerCheck.starvedByRemainder.length > 0 && (
           <div className="mb-4">
@@ -7388,8 +7510,11 @@ function BillsTab({ state, d, setIn, setBucket, update, setToast }) {
                   {items.some((x) => x.type === "card") &&
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--bad)" }} />}
                 </div>
+                {/* 9px on --muted, not 8px on --faint: the smaller pairing
+                    missed AA in both themes, and this is the number the
+                    calendar exists to show. */}
                 {total > 0 && (
-                  <div className="text-[8px] font-mono-num mt-0.5" style={{ color: "var(--faint)" }}>
+                  <div className="text-[9px] font-mono-num mt-0.5" style={{ color: "var(--muted)" }}>
                     {total >= 1000 ? `${Math.round(total / 100) / 10}k` : Math.round(total)}
                   </div>
                 )}
@@ -7841,13 +7966,17 @@ function CardEditor({ card, qk, onClose, onSave, onDelete }) {
 
 
 // ===================== §13  GROW =====================
-function GrowTab({ state, d, update, setIn, setBucket, addBucket, removeBucket, setToast }) {
-  const [section, setSection] = useState("goals");
+function GrowTab({ state, d, roadmap, update, setIn, setBucket, addBucket, removeBucket, setToast }) {
+  // Opens on the ordered picture rather than on a subject. Four subject pills
+  // with no overview meant you had to already know which one held the thing
+  // you wanted; this answers "where am I" before "what about the car".
+  const [section, setSection] = useState("progress");
   const [carOpen, setCarOpen] = useState(false);
   const [bankOpen, setBankOpen] = useState(false);
   const [rentOpen, setRentOpen] = useState(false);
 
-  const SECTIONS = [["goals", "Goals"], ["car", "Car"], ["invest", "Investing"], ["worth", "Net worth"]];
+  const SECTIONS = [["progress", "Progress"], ["goals", "Goals"], ["car", "Car"],
+                    ["invest", "Investing"], ["worth", "Net worth"]];
 
   return (
     <div>
@@ -7857,6 +7986,7 @@ function GrowTab({ state, d, update, setIn, setBucket, addBucket, removeBucket, 
         ))}
       </div>
 
+      {section === "progress" && <ProgressSection {...{ state, d, roadmap, setSection }} />}
       {section === "goals" && <GoalsSection {...{ state, d, update, setIn, setBucket, addBucket, removeBucket, rentOpen, setRentOpen }} />}
       {section === "car"    && <CarSection {...{ state, d, update, setIn, setToast, carOpen, setCarOpen }} />}
       {section === "invest" && <InvestSection {...{ state, d, update, setIn, setBucket, addBucket, removeBucket, setToast, bankOpen, setBankOpen }} />}
@@ -7864,6 +7994,87 @@ function GrowTab({ state, d, update, setIn, setBucket, addBucket, removeBucket, 
     </div>
   );
 }
+
+/**
+ * Where you are, in order.
+ *
+ * The roadmap already encodes the right sequence — each step is worth more
+ * than the one after it — so it makes a better spine for this tab than four
+ * subject pills did. Each step says where it lives, so it doubles as
+ * navigation.
+ */
+function ProgressSection({ state, d, roadmap, setSection }) {
+  const done = roadmap.filter((p) => p.done).length;
+  const current = roadmap.find((p) => !p.done);
+  // Which pill each step belongs to, so a step can hand you off to its detail.
+  const goesTo = { car_buyout: "car", starter_ef: "goals", full_ef: "goals",
+                   match: null, high_interest: null, max_roth_ira: "invest",
+                   max_401k: "invest", taxable: "invest" };
+
+  return (
+    <div>
+      <Card className="mb-4">
+        <div className="text-[12px] mb-1" style={{ color: "var(--muted)" }}>Net worth</div>
+        <NetWorthChart series={d.nwSeries} />
+      </Card>
+
+      <SectionLabel right={<span className="font-mono-num text-[11px]" style={{ color: "var(--faint)" }}>
+        {done} of {roadmap.length}
+      </span>}>Your order of operations</SectionLabel>
+      <Card className="mb-1">
+        <div className="text-[12px] leading-relaxed mb-4" style={{ color: "var(--muted)" }}>
+          Each step is worth more than the one below it, so work down. You're on{" "}
+          <span style={{ color: "var(--text)" }}>{current ? current.title : "the last of them"}</span>.
+        </div>
+        <div className="space-y-1">
+          {roadmap.map((p, i) => {
+            const isCurrent = current && p.key === current.key;
+            const target = goesTo[p.key];
+            return (
+              <div key={p.key} className="flex gap-3">
+                <div className="flex flex-col items-center shrink-0">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-mono-num"
+                       style={{ background: p.done ? "var(--good)" : isCurrent ? "var(--accent)" : "var(--card-2)",
+                                color: p.done || isCurrent ? "var(--on-accent)" : "var(--faint)",
+                                border: `1px solid ${p.done ? "var(--good)" : isCurrent ? "var(--accent)" : "var(--border)"}` }}>
+                    {p.done ? <IconCheck className="w-3.5 h-3.5" /> : i + 1}
+                  </div>
+                  {i < roadmap.length - 1 && <div className="w-px flex-1 my-1" style={{ background: "var(--border)" }} />}
+                </div>
+                <div className="pb-5 min-w-0 flex-1">
+                  <div className="text-[13px] font-medium flex items-center gap-2">
+                    <span className="min-w-0 truncate">{p.title}</span>
+                    {isCurrent && <span className="text-[9px] px-1.5 py-0.5 rounded-full shrink-0"
+                      style={{ background: "var(--accent-soft)", color: "var(--accent-text)" }}>now</span>}
+                  </div>
+                  <div className="text-[12px] mt-0.5" style={{ color: "var(--muted)" }}>{p.detail}</div>
+                  {!p.done && (
+                    <div className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--faint)" }}>{p.why}</div>
+                  )}
+                  {!p.done && p.progress > 0 && p.progress < 1 && (
+                    <div className="mt-2"><ProgressBar value={p.progress} color="var(--accent)" height={4} /></div>
+                  )}
+                  {p.warn && (
+                    <div className="text-[11px] mt-2 p-2.5 rounded-xl leading-relaxed"
+                         style={{ background: "var(--warn-soft)", color: "var(--warn)" }}>{p.warn}</div>
+                  )}
+                  {target && !p.done && (
+                    <button onClick={() => setSection(target)}
+                      className="text-[11px] mt-2 pressable" style={{ color: "var(--accent-text)" }}>
+                      Open {SECTION_LABEL[target]} →
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+const SECTION_LABEL = { goals: "Goals", car: "Car", invest: "Investing", worth: "Net worth" };
 
 function GoalsSection({ state, d, update, setIn, setBucket, addBucket, removeBucket, rentOpen, setRentOpen }) {
   const emergencyB = d.emergencyBucket;
@@ -8846,7 +9057,7 @@ function DebtSection({ state, update }) {
 
 
 // ===================== §14  SETUP =====================
-function SetupSheet({ open, onClose, state, d, setIn, update, exportData, importData, importStatements, setToast }) {
+function SetupSheet({ open, onClose, openPlan, state, d, setIn, update, exportData, importData, importStatements, setToast }) {
   const [tab, setTab] = useState("you");
   const [importText, setImportText] = useState("");
   const fileRef = useRef(null);
@@ -8878,6 +9089,21 @@ function SetupSheet({ open, onClose, state, d, setIn, update, exportData, import
 
       {tab === "you" && (
         <div>
+          {/* First thing in Settings, because it's the thing people actually
+              come here to change. */}
+          <button onClick={openPlan}
+            className="w-full flex items-center gap-3 p-4 rounded-2xl mb-5 text-left pressable"
+            style={{ background: "var(--card-2)", border: "1px solid var(--border)" }}>
+            <IconWallet className="w-4 h-4 shrink-0" style={{ color: "var(--accent-text)" }} />
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-medium">Paycheck &amp; plan</div>
+              <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--faint)" }}>
+                What you earn, what goes to retirement, and the order everything fills up
+              </div>
+            </div>
+            <IconChevron className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--faint)" }} />
+          </button>
+
           <Field label="Appearance" hint="Dark by default. Pick System to follow your phone instead.">
             <div className="flex gap-2">
               {[["dark", "Dark"], ["light", "Light"], ["system", "System"]].map(([k, l]) => (
