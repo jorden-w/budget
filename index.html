@@ -645,6 +645,15 @@ const fmtShort = (n) => {
 };
 const pct = (n, digits = 1) => `${(Number(n) || 0).toFixed(digits)}%`;
 const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
+/**
+ * Whether a figure has actually been entered.
+ *
+ * Zero and "you never told me" are different facts and the app used to
+ * conflate them: with no checking balance on file it reported "free to spend
+ * −$782" and raised two alerts about a shortfall, all derived from a blank
+ * field. A budgeting app that invents a crisis is worse than one that asks.
+ */
+const isSet = (v) => v !== null && v !== undefined && v !== "";
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 /**
  * Strictly increasing numeric id.
@@ -790,7 +799,7 @@ const V5_KEY = "budget_v5";
 const V4_KEY = "budget_v4";
 const V3_KEY = "budget_v3";
 const LEGACY_KEY = "paycheck_allocator_v2";
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 /**
  * One line off a statement.
@@ -1104,7 +1113,9 @@ const defaultState = () => ({
   // are buckets (the waterfall funds them), so their balance and YTD live on
   // the bucket — one source of truth, no double-counting in net worth.
   // The 401(k)s come out of payroll rather than the waterfall, so they stay.
-  accounts: { checking: 0, savings: 0, trad401k: 0, roth401k: 0, hsa: 0 },
+  // null, not 0 — see isSet. These stay unknown until you say otherwise, so
+  // nothing downstream pretends a blank field is an empty account.
+  accounts: { checking: null, savings: null, trad401k: null, roth401k: null, hsa: null },
 
   debts: [],
   modules: { debt: false, hsa: false },
@@ -1393,21 +1404,42 @@ const migrateV8 = (v8) => {
   return s;
 };
 
+/**
+ * v9 → v10. Account balances become "unknown" rather than zero.
+ *
+ * Only for states that plainly never set them: no paycheck ever logged and no
+ * net-worth snapshot taken. Someone who really does have $0 in checking and
+ * has been using the app keeps their zero — the point is to stop inventing a
+ * shortfall for people who simply hadn't filled the field in yet.
+ */
+const migrateV9 = (v9) => {
+  const out = deepMerge(defaultState(), v9);
+  out.schemaVersion = SCHEMA_VERSION;
+  const untouched = (out.history || []).length === 0 && (out.netWorthHistory || []).length === 0;
+  if (untouched) {
+    const acc = { ...out.accounts };
+    for (const k of ["checking", "savings"]) if (num(acc[k]) === 0) acc[k] = null;
+    out.accounts = acc;
+  }
+  out.migratedFrom = (v9.migratedFrom ? v9.migratedFrom + "+" : "") + "v9";
+  return out;
+};
+
 const migrate = (raw) => {
   if (!raw || typeof raw !== "object") return defaultState();
   const v = num(raw.schemaVersion);
   const chain = (from) => {
     // migrateVN takes a vN state one rung up, so index 0 is the v3 step and a
     // state at version N starts at index N−3.
-    const steps = [migrateV3, migrateV4, migrateV5, migrateV6, migrateV7, migrateV8];
+    const steps = [migrateV3, migrateV4, migrateV5, migrateV6, migrateV7, migrateV8, migrateV9];
     return steps.slice(Math.max(0, from - 3)).reduce((acc, step) => step(acc), raw);
   };
   let out;
-  if (v >= 9) out = deepMerge(defaultState(), raw);
+  if (v >= 10) out = deepMerge(defaultState(), raw);
   else if (v >= 3) out = chain(v);
   // Anything without schemaVersion that has v2's fingerprint fields is v2.
   else if ("paycheckAmount" in raw || "customAllocations" in raw || "contributions" in raw) {
-    out = [migrateV2, migrateV3, migrateV4, migrateV5, migrateV6, migrateV7, migrateV8]
+    out = [migrateV2, migrateV3, migrateV4, migrateV5, migrateV6, migrateV7, migrateV8, migrateV9]
       .reduce((acc, step) => step(acc), raw);
   } else out = deepMerge(defaultState(), raw);
   return dedupeIds(out);
@@ -2785,6 +2817,9 @@ const derive = (s) => {
     // an asset, not cash, and not everyone pays.
     owed: owedToYou(s),
     owedSplit: owedBreakdown(s),
+    // Has a checking balance actually been entered? Everything cash-flow
+    // shaped is meaningless until it has.
+    cashKnown: isSet(s.accounts?.checking),
     hikes: priceHikes(s),
     nwSeries: netWorthSeries(s.netWorthHistory, netWorth, thisMonth),
     trad401kAnnual: toAnnual(pay.trad401k, cadence),
@@ -2835,7 +2870,7 @@ const recommendations = (s, d) => {
   const band = (v, step = 250) => Math.round(num(v) / step);
 
   // Running out of money on a specific date outranks everything else here.
-  if (d.forecast?.goesNegative) {
+  if (d.cashKnown && d.forecast?.goesNegative) {
     const when = new Date(todayISO(d.forecast.firstNegative) + "T00:00:00")
       .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     push("bad", `Checking runs dry on ${when}`,
@@ -2844,7 +2879,12 @@ const recommendations = (s, d) => {
   }
 
   // Cash shortfalls come first — they're the ones with a deadline.
-  if (d.card.enabled && d.card.totalBalance > 0 && !d.card.covered) {
+  if (!d.cashKnown) {
+    push("info", "Add your checking balance",
+      "Nearly everything on Today — what's free to spend, the 60-day projection, whether your cards are covered — is measured from it. Until it's in, those are all blank rather than wrong.",
+      "no-checking-balance");
+  }
+  if (d.cashKnown && d.card.enabled && d.card.totalBalance > 0 && !d.card.covered) {
     push("bad", "Checking won't cover your card statements",
       `${fmt(d.card.totalBalance)} across ${d.card.list.length} card${d.card.list.length === 1 ? "" : "s"} against ${fmt(s.accounts.checking)} in checking — you're ${fmt(d.card.totalBalance - num(s.accounts.checking))} short. This is the month a paid-in-full card turns into debt.`,
       `card-uncovered-${band(d.card.totalBalance - num(s.accounts.checking))}`);
@@ -2856,11 +2896,17 @@ const recommendations = (s, d) => {
       push("warn", `Activate ${t.card.name}'s ${t.rate}% categories`,
         `${t.cats.map(spendLabel).join(", ")} pay ${t.rate}% this quarter, but only once you activate — until then it earns ${num(t.card.rewards.base)}%. ${daysLeftInQuarter()} days left in ${quarterLabel(t.qk)}.`,
         `activate-${t.card.id}-${t.qk}`);
-    } else {
-      push("info", `${t.card.name} has no categories set for this quarter`,
-        `Add what ${quarterLabel(t.qk)} is paying ${num(t.card.rewards.rotating.rate)}% on so the card picker can use it.`,
-        `no-cats-${t.card.id}-${t.qk}`);
     }
+  }
+  // One errand, not one alert per card.
+  const needCats = d.rotatingTodo.filter((t) => t.issue === "unset");
+  if (needCats.length) {
+    const names = listJoin(needCats.map((t) => t.card.name));
+    push("info", needCats.length === 1
+      ? `${names} has no categories set for this quarter`
+      : `${names} have no categories set for this quarter`,
+      `Add what ${quarterLabel(needCats[0].qk)} pays the bonus rate on, and the card picker can tell you which one to reach for.`,
+      `no-cats-${needCats.map((t) => t.card.id).join("-")}-${needCats[0].qk}`);
   }
   // A subscription that went up rarely announces itself.
   for (const h of (d.hikes || []).slice(0, 3)) {
@@ -2877,7 +2923,7 @@ const recommendations = (s, d) => {
     }
   }
   const dueUnfunded = d.billsDueSoon.reduce((sum, b) => sum + b.amount, 0);
-  if (dueUnfunded > num(s.accounts.checking) - (d.card.enabled ? d.card.totalBalance : 0)) {
+  if (d.cashKnown && dueUnfunded > num(s.accounts.checking) - (d.card.enabled ? d.card.totalBalance : 0)) {
     push("warn", "Bills due this week exceed free cash",
       `${fmt(dueUnfunded)} due within 7 days, and ${fmt(d.card.freeToSpend)} free after the card statement.`,
       `bills-tight-${band(dueUnfunded)}`);
@@ -3329,6 +3375,60 @@ const runTests = () => {
     eq(b.profit, 1500, 0.01, "profit");
     eq(b.taxOwedEstimate, 375, 0.01, "tax at a 25% set-aside");
     return eq(b.reserveShortfall, 375, 0.01, "nothing reserved yet");
+  });
+
+  // ---------- v9: unknown vs zero ----------
+  t("unknown balance: an unentered checking balance raises no false alarms", () => {
+    // The bug: with nothing entered the app read $0, computed "free to spend
+    // −$782" and fired two shortfall alerts off a blank field.
+    const s = defaultState();
+    s.cardsEnabled = true;
+    s.cards = [mkCard({ id: 1, name: "Discover", statementBalance: 782, dueDay: 7 })];
+    ok(!isSet(s.accounts.checking), "starts unknown, not zero");
+    const alerts = recommendations(s, derive(s));
+    ok(!alerts.some((a) => /won't cover your card/i.test(a.title)), "no fake shortfall");
+    ok(!alerts.some((a) => /runs dry/i.test(a.title)), "no fake run-dry date");
+    return ok(alerts.some((a) => a.id === "no-checking-balance"), "asks for the number instead");
+  });
+
+  t("unknown balance: a real zero is treated as real", () => {
+    // Someone who genuinely has nothing in checking should still be warned.
+    const s = defaultState();
+    s.accounts.checking = 0;
+    s.cardsEnabled = true;
+    s.cards = [mkCard({ id: 1, name: "Discover", statementBalance: 782, dueDay: 7 })];
+    ok(isSet(s.accounts.checking), "zero is a fact once entered");
+    const alerts = recommendations(s, derive(s));
+    ok(alerts.some((a) => /won't cover your card/i.test(a.title)), "the real shortfall fires");
+    return ok(!alerts.some((a) => a.id === "no-checking-balance"), "and it stops asking");
+  });
+
+  t("migrate: an untouched zero balance becomes unknown, a used one doesn't", () => {
+    const untouched = migrate({ schemaVersion: 9, accounts: { checking: 0, savings: 0 },
+                                history: [], netWorthHistory: [] });
+    ok(!isSet(untouched.accounts.checking), "never filled in, so unknown");
+
+    // Same zero, but this state has been in use — that zero is a real fact.
+    const used = migrate({ schemaVersion: 9, accounts: { checking: 0, savings: 0 },
+                           history: [{ id: 1, type: "paycheck" }], netWorthHistory: [] });
+    return ok(isSet(used.accounts.checking), "kept, because they've been using it");
+  });
+
+  t("unknown balance: isSet distinguishes blank from zero", () => {
+    ok(!isSet(null) && !isSet(undefined) && !isSet(""), "blank is unknown");
+    return ok(isSet(0) && isSet(-50) && isSet(1200), "a number is a number, including zero");
+  });
+
+  t("rotating cards: one errand produces one alert, not one per card", () => {
+    const s = defaultState();
+    s.accounts.checking = 500;
+    s.cardsEnabled = true;
+    s.cards = [
+      mkCard({ id: 1, name: "Discover", rewards: { base: 1, categories: [], rotating: { enabled: true, rate: 5, capQuarterly: 1500, spentThisQuarter: 0, activated: {}, quarters: {} } } }),
+      mkCard({ id: 2, name: "Chase", rewards: { base: 1, categories: [], rotating: { enabled: true, rate: 5, capQuarterly: 1500, spentThisQuarter: 0, activated: {}, quarters: {} } } }),
+    ];
+    const alerts = recommendations(s, derive(s)).filter((a) => /no categories set/i.test(a.title));
+    return eq(alerts.length, 1, 0.001, "both cards, one alert");
   });
 
   // ---------- v9: contribution pace ----------
@@ -5889,14 +5989,20 @@ function TodayTab({ state, d, recs, dismissedCount, roadmap, setTab, addPaycheck
       <div className="grid grid-cols-2 gap-3 mb-4">
         <Card className="!p-4">
           <div className="text-[11px] mb-1 truncate" style={{ color: "var(--faint)" }}>Free to spend</div>
+          {/* An em dash, not a number. Computing this from an unentered
+              balance produced a confident deficit out of nothing. */}
           <div className="num-hero text-[20px] truncate"
-               style={{ color: d.card.freeToSpend < 0 ? "var(--bad)" : "var(--text)" }}>
-            {fmt0(d.card.freeToSpend)}
+               style={{ color: !d.cashKnown ? "var(--faint)"
+                             : d.card.freeToSpend < 0 ? "var(--bad)" : "var(--text)" }}>
+            {d.cashKnown ? fmt0(d.card.freeToSpend) : "—"}
           </div>
           <div className="text-[11px] mt-1 truncate" style={{ color: "var(--faint)" }}>
-            {d.card.enabled && d.card.totalBalance > 0
-              ? `after ${fmtShort(d.card.totalBalance)} on ${d.card.list.length} card${d.card.list.length === 1 ? "" : "s"}`
-              : "in checking"}
+            {!d.cashKnown
+              ? <button onClick={() => setSetupOpen(true)} className="pressable"
+                        style={{ color: "var(--accent-text)" }}>add your balance</button>
+              : d.card.enabled && d.card.totalBalance > 0
+                ? `after ${fmtShort(d.card.totalBalance)} on ${d.card.list.length} card${d.card.list.length === 1 ? "" : "s"}`
+                : "in checking"}
           </div>
           {/* Deliberately below the line and not added in: it's real money and
               it's coming, but until it lands it isn't yours to spend. */}
@@ -5916,6 +6022,12 @@ function TodayTab({ state, d, recs, dismissedCount, roadmap, setTab, addPaycheck
         </Card>
       </div>
 
+      <div className="mb-4">
+        <Button onClick={() => addPaycheck("paycheck")} icon={IconPlus} className="w-full">
+          Add paycheck — {fmt(d.pay.netPay)}
+        </Button>
+      </div>
+
       {/* ---- the next 60 days ----
           Ahead of net worth on purpose: "do I make rent" is a this-week
           question and net worth is a this-decade one. */}
@@ -5926,8 +6038,14 @@ function TodayTab({ state, d, recs, dismissedCount, roadmap, setTab, addPaycheck
             {d.forecast.spendOnCard ? `spending on ${d.forecast.spendOnCard.name}` : "spending from checking"}
           </span>
         </div>
-        <ForecastChart forecast={d.forecast} />
-        <div className="text-[11px] mt-2 leading-relaxed pt-3"
+        {d.cashKnown ? <ForecastChart forecast={d.forecast} /> : (
+          <div className="text-[12px] py-8 text-center leading-relaxed" style={{ color: "var(--muted)" }}>
+            This projects your balance day by day once it knows where you're starting from.<br />
+            <button onClick={() => setSetupOpen(true)} className="pressable mt-1"
+                    style={{ color: "var(--accent-text)" }}>Add your checking balance</button>
+          </div>
+        )}
+        {d.cashKnown && <div className="text-[11px] mt-2 leading-relaxed pt-3"
              style={{ color: "var(--muted)", borderTop: "1px solid var(--border)" }}>
           {d.forecast.goesNegative ? (
             <>You run out on{" "}
@@ -5941,7 +6059,7 @@ function TodayTab({ state, d, recs, dismissedCount, roadmap, setTab, addPaycheck
               <span className="font-mono-num" style={{ color: "var(--text)" }}>{fmt0(d.forecast.low.balance)}</span>{" "}
               at the low point.</>
           )}
-        </div>
+        </div>}
       </Card>
 
 
@@ -6051,8 +6169,7 @@ function TodayTab({ state, d, recs, dismissedCount, roadmap, setTab, addPaycheck
           </>
         ) : (
           <EmptyState icon={IconCard} title="Nothing logged this month"
-            body="At month end, enter what you actually spent per category. That's what turns a plan into a budget."
-            action="Log spending" onAction={() => setTab("spend")} />
+            body="Import a statement or type what you spent per category, and this fills in. That's what turns a plan into a budget." />
         )}
       </Card>
 
@@ -6073,12 +6190,6 @@ function TodayTab({ state, d, recs, dismissedCount, roadmap, setTab, addPaycheck
           </div>
         </Card>
       )}
-
-      <div className="mt-4">
-        <Button onClick={() => addPaycheck("paycheck")} icon={IconPlus} className="w-full">
-          Add paycheck — {fmt(d.pay.netPay)}
-        </Button>
-      </div>
 
       {/* ---- where you are ---- */}
       {(() => {
@@ -7440,8 +7551,16 @@ function BillsTab({ state, d, setIn, setBucket, update, setToast }) {
   const firstDow = viewDate.getDay();
 
   const dated = state.buckets.filter((b) => !b.archived && b.dueDay);
+  // Fixed commitments only. This used to include every discretionary
+  // category, so the Bills tab listed groceries and dining as "bills without
+  // a date" and invited you to give them a due day — which means nothing for
+  // money you spend a bit at a time.
+  // Fixed commitments only. Rollover is this app's fixed-vs-variable tell:
+  // groceries and gas carry unspent budget forward because they're spent a
+  // bit at a time, and a "due date" means nothing for those. Rent, insurance
+  // and phone don't roll over — those are the ones worth putting on a date.
   const undated = state.buckets.filter((b) => !b.archived && !b.dueDay &&
-    (b.kind === "expense" || b.kind === "discretionary"));
+    b.kind === "expense" && !b.rollover);
 
   // What lands on each day: bills, the card statement, and paydays.
   const byDay = {};
@@ -7567,10 +7686,17 @@ function BillsTab({ state, d, setIn, setBucket, update, setToast }) {
                 </div>
                 <div className="text-[11px]" style={{ color: b.days <= 3 ? "var(--warn)" : "var(--faint)" }}>
                   {b.days === 0 ? "due today" : b.days === 1 ? "due tomorrow" : `in ${b.days} days`}
-                  {covering && ` · covered by the ${covering.toLocaleDateString("en-US", { month: "short", day: "numeric" })} paycheck`}
+                  {/* A bill with no amount can't be "covered" by anything, and
+                      saying so was the tell that it hadn't been filled in. */}
+                  {b.amount > 0 && covering &&
+                    ` · covered by the ${covering.toLocaleDateString("en-US", { month: "short", day: "numeric" })} paycheck`}
+                  {b.amount <= 0 && " · no amount set"}
                 </div>
               </div>
-              <span className="font-mono-num text-[14px] shrink-0">{fmt(b.amount)}</span>
+              {b.amount > 0
+                ? <span className="font-mono-num text-[14px] shrink-0">{fmt(b.amount)}</span>
+                : <span className="text-[11px] shrink-0 px-2 py-1 rounded-full"
+                        style={{ background: "var(--card-2)", color: "var(--accent-text)" }}>Set</span>}
             </button>
           );
         })}
@@ -7622,10 +7748,11 @@ function BillsTab({ state, d, setIn, setBucket, update, setToast }) {
 
       {undated.length > 0 && (
         <>
-          <SectionLabel>No fixed date</SectionLabel>
+          <SectionLabel>Missing a due date</SectionLabel>
           <Card>
             <div className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--faint)" }}>
-              Ongoing spending rather than a dated bill. Tap to give one a due date if it is one.
+              Fixed costs with no due date set. Adding one puts them on the calendar and into
+              the projection.
             </div>
             {undated.map((b, i) => (
               <button key={b.id} onClick={() => setEditBucket(b)}
