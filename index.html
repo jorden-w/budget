@@ -603,11 +603,26 @@ const BUCKET_KINDS = {
   discretionary: { label: "Fun money",     color: "var(--c-fun)" },
 };
 
+/**
+ * How a bucket asks for money as the paycheck flows down the priority list.
+ *
+ * The hints say what each rule does to your money rather than naming the
+ * mechanism — "scale with your paycheck" is a description of an
+ * implementation, not a reason to pick it.
+ */
 const FILL_RULES = {
-  fixed:        { label: "Fixed amount",  hint: "Take the same amount every month." },
-  pctOfNet:     { label: "% of take-home", hint: "Scale with your paycheck." },
-  fillToTarget: { label: "Fill to target", hint: "Contribute until the target is hit, then stop." },
-  remainder:    { label: "Whatever's left", hint: "Absorbs everything the buckets above didn't take." },
+  fixed: { label: "Fixed amount",
+    hint: "The same amount every month, no matter what else happens.",
+    good: "rent, phone, insurance — anything with a bill" },
+  pctOfNet: { label: "% of take-home",
+    hint: "Rises and falls with your pay, so a bigger cheque saves more without you touching anything.",
+    good: "saving a set share of what you earn" },
+  fillToTarget: { label: "Fill to target",
+    hint: "Takes its monthly amount until the target is reached, then stops asking and lets the money flow past.",
+    good: "an emergency fund, a Roth IRA — anything with a finish line" },
+  remainder: { label: "Whatever's left",
+    hint: "Takes everything the buckets above it didn't. Nothing below it will ever get funded, so it belongs last.",
+    good: "the one place your spare cash lands" },
 };
 
 /**
@@ -6541,11 +6556,11 @@ function PlanTab({ state, d, setIn, update, setBucket, addBucket, removeBucket, 
         </Button>
       </div>
 
-      <BucketEditor bucket={editBucket} onClose={() => setEditBucket(null)} cadence={d.cadence}
+      <BucketEditor bucket={editBucket} onClose={() => setEditBucket(null)} cadence={d.cadence} netPay={d.pay.netPay}
         onSave={(patch) => { setBucket(editBucket.id, patch); setEditBucket(null); }}
         onDelete={() => { removeBucket(editBucket.id); setEditBucket(null); }} />
       <BucketEditor bucket={addOpen ? mkBucket({ name: "", slot: state.buckets.length % SERIES_SLOTS }) : null}
-        isNew cadence={d.cadence} onClose={() => setAddOpen(false)}
+        isNew cadence={d.cadence} netPay={d.pay.netPay} onClose={() => setAddOpen(false)}
         onSave={(patch) => { addBucket(patch); setAddOpen(false); }} />
     </div>
   );
@@ -6589,7 +6604,7 @@ function BucketRow({ alloc, index, last, onEdit, onMove }) {
   );
 }
 
-function BucketEditor({ bucket, onClose, onSave, onDelete, isNew, cadence }) {
+function BucketEditor({ bucket, onClose, onSave, onDelete, isNew, cadence, netPay }) {
   const [draft, setDraft] = useState(bucket);
   useEffect(() => { setDraft(bucket); }, [bucket]);
   if (!bucket || !draft) return null;
@@ -6609,19 +6624,44 @@ function BucketEditor({ bucket, onClose, onSave, onDelete, isNew, cadence }) {
           </div>
         </Field>
 
-        <Field label="How much" hint={FILL_RULES[draft.fill]?.hint}>
+        <Field label="How much">
           <div className="flex flex-wrap gap-2 mb-3">
             {Object.entries(FILL_RULES).map(([k, v]) => (
               <Pill key={k} active={draft.fill === k} onClick={() => set({ fill: k })}>{v.label}</Pill>
             ))}
           </div>
+          <div className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--muted)" }}>
+            {FILL_RULES[draft.fill]?.hint}
+            {FILL_RULES[draft.fill]?.good && (
+              <span style={{ color: "var(--faint)" }}> Good for {FILL_RULES[draft.fill].good}.</span>
+            )}
+          </div>
+          {/* The footgun. There's an alert for it after the fact, but the
+              moment of choosing is when it's worth saying. */}
+          {draft.fill === "remainder" && (
+            <div className="text-[11px] mb-3 p-3 rounded-xl leading-relaxed"
+                 style={{ background: "var(--warn-soft)", color: "var(--warn)" }}>
+              Put this last in the priority order. It empties the paycheck at whatever position
+              it sits, so any category below it receives nothing at all.
+            </div>
+          )}
           {draft.fill !== "remainder" && (
             <LabeledInput
               label={draft.fill === "pctOfNet" ? "Percent of take-home" : "Per month"}
               prefix={draft.fill === "pctOfNet" ? "" : "$"}
               suffix={draft.fill === "pctOfNet" ? "%" : ""}
               value={draft.amountMonthly} onChange={(v) => set({ amountMonthly: v })}
-              hint={draft.fill !== "pctOfNet" ? `${fmt(fromMonthly(draft.amountMonthly, cadence))} per paycheck` : null} />
+              hint={(() => {
+                // A percentage is abstract until it's dollars off the next
+                // cheque, and a monthly figure is abstract if you're paid
+                // fortnightly. Both get shown as what actually leaves.
+                if (draft.fill === "pctOfNet") {
+                  return num(netPay) > 0
+                    ? `${fmt(num(netPay) * num(draft.amountMonthly) / 100)} out of your ${fmt(netPay)} paycheck`
+                    : null;
+                }
+                return `${fmt(fromMonthly(draft.amountMonthly, cadence))} per paycheck`;
+              })()} />
           )}
         </Field>
 
@@ -7073,11 +7113,11 @@ function SpendTab({ state, d, update, setBucket, addBucket, removeBucket, setAct
       <MoveMoneySheet open={moveOpen} onClose={() => setMoveOpen(false)} rows={rows}
         onMove={(from, to, amt) => { moveMoney(mk, from, to, amt); setMoveOpen(false); }} />
 
-      <BucketEditor bucket={editBucket} onClose={() => setEditBucket(null)} cadence={d.cadence}
+      <BucketEditor bucket={editBucket} onClose={() => setEditBucket(null)} cadence={d.cadence} netPay={d.pay.netPay}
         onSave={(patch) => { setBucket(editBucket.id, patch); setEditBucket(null); }}
         onDelete={() => { removeBucket(editBucket.id); setEditBucket(null); }} />
       <BucketEditor bucket={addOpen ? mkBucket({ name: "", kind: "expense", slot: state.buckets.length % SERIES_SLOTS }) : null}
-        isNew cadence={d.cadence} onClose={() => setAddOpen(false)}
+        isNew cadence={d.cadence} netPay={d.pay.netPay} onClose={() => setAddOpen(false)}
         onSave={(patch) => { addBucket(patch); setAddOpen(false); }} />
     </div>
   );
@@ -7878,7 +7918,7 @@ function BillsTab({ state, d, setIn, setBucket, update, setToast }) {
 
       {/* ---- calendar ---- */}
 
-      <BucketEditor bucket={editBucket} onClose={() => setEditBucket(null)} cadence={d.cadence}
+      <BucketEditor bucket={editBucket} onClose={() => setEditBucket(null)} cadence={d.cadence} netPay={d.pay.netPay}
         onSave={(patch) => { setBucket(editBucket.id, patch); setEditBucket(null); }} />
       <CardEditor card={editCard} qk={d.qk} onClose={() => setEditCard(null)}
         onSave={(patch) => { setCard(editCard.id, patch); setEditCard(null); }}
